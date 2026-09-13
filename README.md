@@ -57,6 +57,14 @@ Open `http://localhost:8000` in your browser.
 On Windows, you can also double-click `start.bat` to start the server and
 `stop.bat` to stop the process listening on port 8000.
 
+### Docker
+```bash
+docker build -t solar-p1 .
+docker run --env-file .env -p 8000:8000 solar-p1
+```
+The container uses port 8000 locally and automatically honors the `PORT`
+environment variable on hosting platforms such as Render.
+
 ### 6. Run Tests
 ```bash
 pytest tests/ -v
