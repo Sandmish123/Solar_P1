@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.db
+*.sqlite3
+.pytest_cache/
+htmlcov/
+dist/
+build/
+*.egg-info/
+.coverage
+*.pdf
+*.png
+temp_pdfs/
+task

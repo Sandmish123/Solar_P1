@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Side Hustler Solar Dashboard</title>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- MapLibre GL JS with OpenStreetMap-compatible OpenFreeMap styles -->
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+    <link rel="stylesheet" href="/css/styles.css">
+</head>
+
+<body>
+    <!-- Top Navigation -->
+    <nav class="navbar">
+        <div class="nav-left">
+            <h1 class="logo-title">Side Hustler Solar Dashboard</h1>
+        </div>
+        <div class="nav-right">
+            <button id="btnNewProject" class="btn btn-primary" onclick="app.showView('form-view')">+ New
+                Proposal</button>
+        </div>
+    </nav>
+
+    <main class="container">
+
+        <!-- DASHBOARD VIEW -->
+        <section id="dashboard-view" class="view active">
+            <div class="header-actions">
+                <h2>Recent Proposals</h2>
+            </div>
+
+            <div id="projects-grid" class="grid-container">
+                <!-- Projects injected by JS -->
+                <div class="loading">Loading projects...</div>
+            </div>
+        </section>
+
+        <!-- INPUT FORM VIEW -->
+        <section id="form-view" class="view hidden">
+            <div class="header-actions">
+                <button class="btn btn-icon" onclick="app.showView('dashboard-view')">← Back</button>
+                <h2>Create Solar Proposal</h2>
+            </div>
+
+            <form id="project-form" onsubmit="app.handleFormSubmit(event)">
+                <div class="form-grid">
+                    <!-- Project Details Card -->
+                    <div class="card form-card">
+                        <h3>1. Project Details</h3>
+                        <div class="input-group">
+                            <label>Project Name</label>
+                            <input type="text" id="project_name" required value="New Solar Project">
+                        </div>
+                        <div class="input-group">
+                            <label>Client Name</label>
+                            <input type="text" id="client_name" required value="Mr.Gurpreet">
+                        </div>
+                        <div class="input-group">
+                            <label>Site Address</label>
+                            <input type="text" id="site_address" required
+                                value="22A/505, Udyog Vihar, Sector 22, Gurugram">
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>Latitude</label>
+                                <input type="number" step="0.000001" id="latitude" required value="28.507563">
+                            </div>
+                            <div class="input-group">
+                                <label>Longitude</label>
+                                <input type="number" step="0.000001" id="longitude" required value="77.061796">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label>Date</label>
+                            <input type="text" id="date" required value="20/7/2026">
+                        </div>
+                    </div>
+
+                    <!-- System Config Card -->
+                    <div class="card form-card">
+                        <h3>2. System Configuration</h3>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>Number of Panels</label>
+                                <input type="number" id="num_panels" required min="1" value="15">
+                            </div>
+                            <div class="input-group">
+                                <label>Panel Wattage (W)</label>
+                                <input type="number" id="panel_wattage" required min="1" value="635">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label>Panel Model</label>
+                            <input type="text" id="panel_model" required value="Luminous Solar LUM 635TG132 Bifi-GL">
+                        </div>
+                        <div class="input-group">
+                            <label>Inverter Model</label>
+                            <input type="text" id="inverter_model" required value="Luminous NXI 320">
+                        </div>
+                        <div class="input-group">
+                            <label>Roof Area (m²)</label>
+                            <input type="number" id="roof_area_sqm" required value="189">
+                        </div>
+                        <div class="input-group">
+                            <label>Degradation Rate (% per year)</label>
+                            <input type="number" step="0.1" id="degradation_rate" value="0.7">
+                        </div>
+                    </div>
+
+                    <!-- Losses Config Card -->
+                    <div class="card form-card full-width">
+                        <h3>3. System Losses (%)</h3>
+                        <div class="loss-grid">
+                            <div class="input-group">
+                                <label>Temperature</label>
+                                <input type="number" step="0.1" id="temp_loss_pct" required value="11.5">
+                            </div>
+                            <div class="input-group">
+                                <label>Shading</label>
+                                <input type="number" step="0.1" id="shading_loss_pct" required value="0.0">
+                            </div>
+                            <div class="input-group">
+                                <label>Soiling</label>
+                                <input type="number" step="0.1" id="soiling_loss_pct" required value="3.0">
+                            </div>
+                            <div class="input-group">
+                                <label>Inverter</label>
+                                <input type="number" step="0.1" id="inverter_loss_pct" required value="3.0">
+                            </div>
+                            <div class="input-group">
+                                <label>Mismatch</label>
+                                <input type="number" step="0.1" id="mismatch_loss_pct" required value="2.0">
+                            </div>
+                            <div class="input-group">
+                                <label>DC Wiring</label>
+                                <input type="number" step="0.1" id="dc_wiring_loss_pct" required value="2.0">
+                            </div>
+                            <div class="input-group">
+                                <label>AC Wiring</label>
+                                <input type="number" step="0.1" id="ac_wiring_loss_pct" required value="0.0">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-actions sticky-bottom">
+                    <button type="button" class="btn btn-secondary"
+                        onclick="app.showView('dashboard-view')">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btnSubmitForm">Generate Report</button>
+                    <span id="formError" class="error-text"></span>
+                </div>
+            </form>
+        </section>
+
+        <!-- REPORT VIEW -->
+        <section id="report-view" class="view hidden">
+            <!-- Modal styling matching UI -->
+            <div class="report-modal">
+                <div class="report-header">
+                    <h2>Energy Report</h2>
+                    <div class="header-right">
+                        <button class="btn btn-secondary" onclick="app.showView('dashboard-view')">Close</button>
+                        <button class="btn btn-secondary" onclick="mapManager.open3DView()"
+                            style="background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; box-shadow: 0 4px 12px rgba(16,185,129,0.3);">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path
+                                    d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+                                </path>
+                                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                            </svg>
+                            View 3D Model
+                        </button>
+                        <button class="btn btn-primary btn-download" onclick="app.downloadPdf()">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            Download PDF
+                        </button>
+                    </div>
+                </div>
+
+                <div class="report-content" id="reportContent">
+                    <!-- SYSTEM SUMMARY SECTION -->
+                    <div class="section-title">SYSTEM SUMMARY</div>
+                    <div class="summary-cards">
+                        <div class="stat-card">
+                            <span class="muted-label">Capacity</span>
+                            <div class="stat-value" id="r_capacity">9.5 <span class="unit">kWp</span></div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="muted-label">Panels</span>
+                            <div class="stat-value" id="r_panels">15</div>
+                            <div class="sub-stat" id="r_panel_w">635W</div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="muted-label">Roof Area</span>
+                            <div class="stat-value" id="r_roof_area">189 <span class="unit">m²</span></div>
+                        </div>
+                    </div>
+
+                    <!-- ANNUAL GENERATION SECTION -->
+                    <div class="section-title mt-xl">ANNUAL GENERATION</div>
+                    <div class="generation-hero">
+                        <div class="hero-top">
+                            <div class="mwh-value" id="r_annual_mwh">13.3 MWh</div>
+                            <div class="year-label">per year (Year 1)</div>
+                        </div>
+                        <div class="hero-bottom flex-row">
+                            <div class="stat-group">
+                                <span class="hero-label">Specific Yield</span>
+                                <span class="hero-val" id="r_specific_yield">1,401 kWh/kWp</span>
+                            </div>
+                            <div class="stat-group">
+                                <span class="hero-label">Performance Ratio</span>
+                                <span class="hero-val" id="r_pr">78.5%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MONTHLY GENERATION CHART -->
+                    <div class="section-title mt-xl">MONTHLY GENERATION</div>
+                    <div class="chart-container">
+                        <canvas id="monthlyChart"></canvas>
+                    </div>
+
+                    <!-- LOSSES BREAKDOWN -->
+                    <div class="section-title mt-xl">LOSSES BREAKDOWN</div>
+                    <div class="losses-container" id="r_losses">
+                        <!-- Populated via JS -->
+                    </div>
+
+                    <!-- PROJECTION -->
+                    <div class="section-title mt-xl">25-YEAR PROJECTION</div>
+                    <div class="projection-flex">
+                        <div class="proj-left">
+                            <div class="muted-label">Lifetime Generation</div>
+                            <div class="stat-value" id="r_lifetime">303.5 MWh</div>
+                        </div>
+                        <div class="proj-right">
+                            <div class="muted-label text-right">Year 25 Output</div>
+                            <div class="stat-value text-right" id="r_year25">11.0 MWh</div>
+                            <div class="sub-stat text-right text-gray" id="r_degradation_pct">(82% of Year 1)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 3D MODEL VIEW -->
+    <section id="model3d-view" class="view hidden" style="position: fixed; inset: 0; z-index: 9999; background: #eef2f7;">
+        <button onclick="app.showView('report-view')" class="btn btn-secondary"
+            style="position: absolute; top: 1rem; right: 1rem; z-index: 10;">✕ Close 3D View</button>
+        <div id="map" style="width: 100%; height: 100%;"></div>
+
+        <!-- Floating UI Overlays mimicking screenshot -->
+        <div class="map-overlay-topleft model-info-panel">
+            <h2 id="m_project_name">New Solar Project</h2>
+            <div id="m_client_name" class="model-client">Mr. Gurpreet</div>
+            <div class="model-value-grid">
+                <div><span class="muted-label">Capacity</span><strong><span id="m_capacity">9.5</span> kWp</strong></div>
+                <div><span class="muted-label">Panels</span><strong id="m_panels">15</strong></div>
+                <div><span class="muted-label">Panel output</span><strong><span id="m_panel_wattage">635</span> W</strong></div>
+                <div><span class="muted-label">Roof area</span><strong><span id="m_roof_area">189</span> m²</strong></div>
+            </div>
+            <div class="model-specs">
+                <div><span>Geometry source</span><strong id="m_geometry_source">Loading building footprint...</strong></div>
+                <div><span>Panel model</span><strong id="m_panel_model">-</strong></div>
+                <div><span>Inverter</span><strong id="m_inverter_model">-</strong></div>
+                <div><span>Site</span><strong id="m_site_address">-</strong></div>
+                <div><span>Proposal date</span><strong id="m_date">-</strong></div>
+                <div><span>Degradation</span><strong id="m_degradation_rate">-</strong></div>
+            </div>
+        </div>
+
+        <div id="solar-model-marker" class="solar-model-marker" aria-label="Interactive 3D solar panel array"></div>
+        <div class="sun-path-overlay" aria-hidden="true">
+            <div class="sun-path-arc"></div>
+            <div id="sun-orb" class="sun-orb"></div>
+        </div>
+
+        <aside class="model-metrics-panel">
+            <div class="model-metrics-title">Proposal performance</div>
+            <div class="model-metric"><span>Annual generation</span><strong id="m_annual_generation">-</strong></div>
+            <div class="model-metric"><span>Specific yield</span><strong id="m_specific_yield">-</strong></div>
+            <div class="model-metric"><span>Performance ratio</span><strong id="m_performance_ratio">-</strong></div>
+            <div class="model-metric"><span>Total system loss</span><strong id="m_total_loss">-</strong></div>
+            <div class="model-metric"><span>25-year generation</span><strong id="m_lifetime_generation">-</strong></div>
+            <div class="model-metric"><span>Year 25 output</span><strong id="m_year25_output">-</strong></div>
+            <div class="model-losses">
+                <div class="model-metrics-title">Loss breakdown</div>
+                <div id="m_loss_breakdown"></div>
+            </div>
+        </aside>
+
+        <div class="map-overlay-bottom">
+            <div class="sun-timeline-controls">
+                <div class="seasons-row">
+                    <button class="season-btn" data-season="winter">Winter</button>
+                    <button class="season-btn active" data-season="summer">Summer</button>
+                    <button class="season-btn" data-season="equinox">Equinox</button>
+                    <button class="season-btn" data-season="today">Today</button>
+                </div>
+                <div class="timeline-bar">
+                    <input id="sun-time" class="sun-time" type="range" min="0" max="100" value="50"
+                        aria-label="Sun position through the day">
+                    <div class="timeline-labels">
+                        <span id="m_sunrise">Sunrise: 6:00 AM</span>
+                        <strong id="m_sun_time">12:00 PM</strong>
+                        <span id="m_sunset">Sunset: 7:00 PM</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="model-selection" class="model-selection" hidden>
+            <div class="model-selection-title">Selected panel</div>
+            <strong id="m_selected_panel">Panel 1</strong>
+            <span id="m_selected_panel_detail">635 W photovoltaic module</span>
+        </div>
+
+        <div id="model-settings" class="model-settings" hidden>
+            <div class="model-metrics-title">View settings</div>
+            <label>Camera pitch <input id="model-pitch" type="range" min="30" max="75" value="60"></label>
+            <label>Zoom <input id="model-zoom" type="range" min="16" max="21" step="0.1" value="19"></label>
+            <button class="btn btn-secondary model-reset" type="button">Reset view</button>
+        </div>
+
+        <div class="map-overlay-sidebar">
+            <button class="tool-btn active" data-tool="array" title="Show solar array">☀️</button>
+            <button class="tool-btn" data-tool="report" title="Show proposal performance">📄</button>
+            <button class="tool-btn" data-tool="map" title="Toggle satellite map">🗺️</button>
+            <button class="tool-btn" data-tool="settings" title="View settings">⚙️</button>
+        </div>
+    </section>
+
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/js/api.js?v=5"></script>
+    <script src="/js/charts.js?v=5"></script>
+    <script src="/js/3d-model.js?v=6"></script>
+    <script src="/js/app.js?v=5"></script>
+</body>
+
+</html>
