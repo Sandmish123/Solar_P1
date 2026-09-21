@@ -1,5 +1,9 @@
 .git
 .gitignore
+# macOS AppleDouble files from the exFAT volume. Alembic loads every *.py in
+# migrations/versions, so one of these in the image crashes the startup migration.
+**/._*
+**/.DS_Store
 .env
 .venv
 __pycache__

@@ -1,3 +1,7 @@
+databases:
+  - name: solar-report-db
+    plan: free
+
 services:
   - type: web
     name: solar-report-app
@@ -11,7 +15,3 @@ services:
         fromDatabase:
           name: solar-report-db
           property: connectionString
-          
-  - type: psql
-    name: solar-report-db
-    plan: free

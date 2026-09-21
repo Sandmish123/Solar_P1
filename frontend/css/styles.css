@@ -262,7 +262,8 @@ h3 {
     grid-column: 1 / -1;
 }
 
-.loss-grid {
+.loss-grid,
+.field-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 1.25rem;
@@ -519,6 +520,22 @@ h3 {
 
 .hero-val {
     font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.hero-source {
+    padding: 0.75rem 3rem;
+    font-size: 0.8125rem;
+    opacity: 0.85;
+    position: relative;
+    z-index: 1;
+}
+
+/* An estimate must never pass for site data. */
+.hero-source.is-fallback {
+    background: rgba(245, 158, 11, 0.95);
+    color: #1f1300;
+    opacity: 1;
     font-weight: 600;
 }
 

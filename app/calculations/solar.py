@@ -1,8 +1,19 @@
 import json
 
-# Standard peak sun hours for Northern India region (e.g. Gurugram)
-# This acts as a base multiplier for specific yield
-APPROX_PEAK_SUN_HOURS = 1400  # Adjust slightly to match the report's 1401
+# PVGIS uses ERA5 reanalysis for India, and ERA5 overestimates irradiance under heavy
+# aerosol haze: raw PVGIS over-promises ~20% for Delhi NCR. This factor anchors the
+# absolute level to the one known-good point, the reference proposal's 1401 kWh/kWp at
+# Gurugram with PR 78.5%, against PVGIS v5_3 H(i)_y = 2149.08 kWh/m2 for that cell:
+# (1401 / 0.785) / 2149.08. PVGIS still supplies everything site-relative.
+# ponytail: one national factor. ERA5's haze bias is smaller in the south, so this
+# under-promises there; switch to per-region factors once field data exists.
+DEFAULT_IRRADIANCE_CALIBRATION = 0.8305
+
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+# South-west monsoon, Jun-Sep. A chart label only: the generation dip itself comes
+# from the irradiance data.
+MONSOON_MONTHS = {5, 6, 7, 8}
+
 
 def calculate_capacity_kwp(num_panels: int, panel_wattage_w: float) -> float:
     """Calculates system capacity in kWp."""
@@ -32,18 +43,15 @@ def calculate_performance_ratio(total_loss_pct: float) -> float:
     return 100.0 - total_loss_pct
 
 
-def calculate_annual_generation_kwh(capacity_kwp: float, performance_ratio: float, location_yield_factor: float = 1401) -> float:
+def calculate_annual_generation_kwh(capacity_kwp: float, performance_ratio: float, h_annual: float) -> float:
     """
-    Calculates 1st year annual generation.
-    Uses a standard location_yield_factor (simulated base peak sun hours).
-    In a real app, this would query a solar API by coordinates (e.g., PVGIS).
-    Here we match the PDF math: 9.53 * 1401 = 13351, performance ratio is already baked into specific yield in PDF presentation,
-    Wait, PDF says: Specific yield = 1401, Annual = 13.3 MWh (13,344 kWh). 9.525 * 1401 = 13344.525.
-    So Annual = capacity * specific_yield directly.
+    First-year AC generation from in-plane irradiation (kWh/m2/yr).
+    Modules are rated at 1 kW/m2, so each kWh/m2 of irradiation yields 1 kWh per kWp
+    before losses; PR then applies the loss stack.
     """
     if capacity_kwp <= 0:
         return 0.0
-    return capacity_kwp * location_yield_factor
+    return capacity_kwp * h_annual * performance_ratio / 100.0
 
 
 def calculate_specific_yield(annual_gen_kwh: float, capacity_kwp: float) -> float:
@@ -53,45 +61,31 @@ def calculate_specific_yield(annual_gen_kwh: float, capacity_kwp: float) -> floa
     return round(annual_gen_kwh / capacity_kwp, 1)
 
 
-def calculate_monthly_generation(annual_gen_kwh: float) -> str:
+def calculate_monthly_generation(annual_gen_kwh: float, monthly_h: list) -> str:
     """
-    Distributes annual generation into months.
+    Distributes annual generation by each month's share of in-plane irradiation.
     Returns JSON string for storage in DB/Frontend.
     """
-    # Standard distribution for India (~28°N)
-    factors = [
-        0.075,  # Jan
-        0.080,  # Feb
-        0.095,  # Mar
-        0.100,  # Apr
-        0.105,  # May
-        0.085,  # Jun (Monsoon)
-        0.070,  # Jul (Monsoon)
-        0.070,  # Aug (Monsoon)
-        0.075,  # Sep (Monsoon)
-        0.085,  # Oct
-        0.080,  # Nov
-        0.080   # Dec
+    total = sum(monthly_h)
+    if len(monthly_h) != 12 or total <= 0:
+        raise ValueError("monthly_h must be 12 values with a positive total")
+
+    monthly_data = [
+        {
+            "month": MONTHS[i],
+            "value_kwh": round(annual_gen_kwh * h / total, 1),
+            "season": "Monsoon" if i in MONSOON_MONTHS else "Regular",
+        }
+        for i, h in enumerate(monthly_h)
     ]
-    
-    # Normalize to ensure exactly 1.0 sum due to float math
-    total = sum(factors)
-    normalized = [f / total for f in factors]
-    
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    monthly_data = []
-    
-    for i, factor in enumerate(normalized):
-        val = annual_gen_kwh * factor
-        # Label monsoon months
-        is_monsoon = 5 <= i <= 8  # Jun(5) to Sep(8)
-        monthly_data.append({
-            "month": months[i],
-            "value_kwh": round(val, 1),
-            "season": "Monsoon" if is_monsoon else "Regular"
-        })
-        
     return json.dumps(monthly_data)
+
+
+def generation_by_year(year1_generated_kwh: float, degradation_pct: float, num_years: int = 25) -> list:
+    """Yearly generation with compounded degradation, year 1 first. Shared with the
+    financial model so both use the same degradation curve."""
+    retained = 1.0 - degradation_pct / 100.0
+    return [year1_generated_kwh * retained ** year for year in range(num_years)]
 
 
 def calculate_lifetime_generation(year1_generated_kwh: float, degradation_pct: float, num_years: int = 25) -> dict:
@@ -100,26 +94,23 @@ def calculate_lifetime_generation(year1_generated_kwh: float, degradation_pct: f
     """
     if num_years <= 0 or year1_generated_kwh <= 0:
         return {"lifetime_mwh": 0.0, "final_year_mwh": 0.0}
-        
-    deg_rate = degradation_pct / 100.0
-    total_kwh = year1_generated_kwh
-    current_year_kwh = year1_generated_kwh
-    
-    for _ in range(1, num_years):
-        current_year_kwh = current_year_kwh * (1.0 - deg_rate)
-        total_kwh += current_year_kwh
-        
+
+    yearly = generation_by_year(year1_generated_kwh, degradation_pct, num_years)
     return {
-        "lifetime_mwh": round(total_kwh / 1000.0, 1),
-        "final_year_mwh": round(current_year_kwh / 1000.0, 1)
+        "lifetime_mwh": round(sum(yearly) / 1000.0, 1),
+        "final_year_mwh": round(yearly[-1] / 1000.0, 1)
     }
 
 
-def perform_all_calculations(project_data: dict) -> dict:
-    """Runs all calculations and returns a dict of results."""
+def perform_all_calculations(project_data: dict, irradiance: dict) -> dict:
+    """
+    Runs all calculations and returns a dict of results.
+    `irradiance` is {"monthly_h": [12 x kWh/m2], "h_annual": kWh/m2/yr, "source": str},
+    as returned by app.services.irradiance.get_irradiance.
+    """
     # 1. Capacity
     cap_kwp = calculate_capacity_kwp(project_data['num_panels'], project_data['panel_wattage'])
-    
+
     # 2. Losses
     total_loss = calculate_total_system_loss(
         project_data['temp_loss_pct'], project_data['shading_loss_pct'],
@@ -127,27 +118,23 @@ def perform_all_calculations(project_data: dict) -> dict:
         project_data['mismatch_loss_pct'], project_data['dc_wiring_loss_pct'],
         project_data['ac_wiring_loss_pct']
     )
-    
+
     # 3. Performance Ratio
     pr = calculate_performance_ratio(total_loss)
-    
-    # 4. Annual Generation (Uses static multiplier for simplicity, real app might integrate PR)
-    # The reference PDF implies specific yield = 1401 and Annual Gen = Capacity * Specific Yield
-    specific_yield_base = 1401.0
-    # Add slight variation based on PR (if PR is higher, yield is higher)
-    adjusted_yield = specific_yield_base * (pr / 78.5) # Normalized to reference 78.5%
-    
-    annual_kwh = calculate_annual_generation_kwh(cap_kwp, pr, adjusted_yield)
-    
+
+    # 4. Annual Generation, from dataset irradiance corrected for its absolute bias
+    effective_h = irradiance['h_annual'] * project_data['irradiance_calibration']
+    annual_kwh = calculate_annual_generation_kwh(cap_kwp, pr, effective_h)
+
     # 5. Specific Yield
     spec_yield = calculate_specific_yield(annual_kwh, cap_kwp)
-    
+
     # 6. Monthly Generation
-    monthly_json = calculate_monthly_generation(annual_kwh)
-    
+    monthly_json = calculate_monthly_generation(annual_kwh, irradiance['monthly_h'])
+
     # 7. Lifetime Generation (25 yrs)
     lifetime_data = calculate_lifetime_generation(annual_kwh, project_data.get('degradation_rate', 0.7))
-    
+
     return {
         "capacity_kwp": cap_kwp,
         "total_system_loss": total_loss,
@@ -157,5 +144,7 @@ def perform_all_calculations(project_data: dict) -> dict:
         "lifetime_gen_mwh": lifetime_data['lifetime_mwh'],
         "year25_output_mwh": lifetime_data['final_year_mwh'],
         "monthly_gen_json": monthly_json,
+        "irradiance_source": irradiance['source'],
+        "irradiance_h_annual": irradiance['h_annual'],
         "is_calculated": True
     }

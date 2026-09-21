@@ -1,7 +1,9 @@
 from sqlalchemy.orm import Session
 from app.models.solar_project import SolarProject
 from app.schemas.solar_project import ProjectCreate, ProjectUpdate
+from app.calculations.financial import perform_financial_calculations
 from app.calculations.solar import perform_all_calculations
+from app.services.irradiance import get_irradiance
 
 
 def get_project(db: Session, project_id: int):
@@ -34,12 +36,14 @@ def update_project(db: Session, project_id: int, project: ProjectUpdate):
     return db_project
 
 
-def calculate_project(db: Session, project_id: int):
+async def calculate_project(db: Session, project_id: int):
+    """Raises app.services.irradiance.InvalidLocationError if PVGIS rejects the site."""
     db_project = get_project(db, project_id)
     if not db_project:
         return None
-        
-    # Extract data for calculation
+
+    # Extract data for calculation. Read before get_irradiance: a cache-write
+    # rollback there expires db_project's loaded attributes.
     data = {
         "num_panels": db_project.num_panels,
         "panel_wattage": db_project.panel_wattage,
@@ -51,10 +55,28 @@ def calculate_project(db: Session, project_id: int):
         "mismatch_loss_pct": db_project.mismatch_loss_pct,
         "dc_wiring_loss_pct": db_project.dc_wiring_loss_pct,
         "ac_wiring_loss_pct": db_project.ac_wiring_loss_pct,
+        "irradiance_calibration": db_project.irradiance_calibration,
     }
-    
-    results = perform_all_calculations(data)
-    
+    financial_inputs = {
+        "system_cost_inr": db_project.system_cost_inr,
+        "subsidy_inr": db_project.subsidy_inr,
+        "tariff_inr_per_kwh": db_project.tariff_inr_per_kwh,
+        "tariff_escalation_pct": db_project.tariff_escalation_pct,
+        "export_ratio_pct": db_project.export_ratio_pct,
+        "export_tariff_inr_per_kwh": db_project.export_tariff_inr_per_kwh,
+        "om_cost_pct": db_project.om_cost_pct,
+        "discount_rate_pct": db_project.discount_rate_pct,
+    }
+
+    irradiance = await get_irradiance(
+        db, db_project.latitude, db_project.longitude, db_project.tilt_deg, db_project.azimuth_deg
+    )
+    results = perform_all_calculations(data, irradiance)
+    # Always written, so removing the system cost clears stale financials.
+    results.update(perform_financial_calculations(
+        financial_inputs, results["capacity_kwp"], results["annual_gen_kwh"], data["degradation_rate"]
+    ))
+
     # Update project with results
     for key, value in results.items():
         setattr(db_project, key, value)

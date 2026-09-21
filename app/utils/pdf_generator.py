@@ -8,6 +8,93 @@ from app.models.solar_project import SolarProject
 import json
 
 
+def format_inr(amount: float) -> str:
+    """Indian digit grouping, e.g. 445875 -> 'Rs. 4,45,875'. 'Rs.' because the built-in
+    Helvetica has no rupee glyph (U+20B9 is not in WinAnsi)."""
+    digits = str(abs(round(amount)))
+    head, tail = digits[:-3], digits[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    if head:
+        groups.insert(0, head)
+    sign = "-" if round(amount) < 0 else ""
+    return f"{sign}Rs. {','.join(groups + [tail])}"
+
+
+def _financial_page(project: SolarProject, title_style, h2_style, note_style) -> list:
+    """Financial summary page, or nothing when the project has no system cost."""
+    if project.net_investment_inr is None:
+        return []
+
+    payback = f"{project.payback_years:g} years" if project.payback_years is not None else "Not within 25 years"
+    irr = f"{project.irr_pct:g}%" if project.irr_pct is not None else "n/a"
+    metrics = [
+        ['System Cost', format_inr(project.system_cost_inr)],
+        ['Subsidy (PM Surya Ghar)' if project.subsidy_inr is None else 'Subsidy', f"- {format_inr(project.subsidy_applied_inr)}"],
+        ['Net Investment', format_inr(project.net_investment_inr)],
+        ['Year 1 Savings', format_inr(project.year1_savings_inr)],
+        ['Payback Period', payback],
+        ['25-Year Net Savings', format_inr(project.lifetime_net_savings_inr)],
+        ['Internal Rate of Return', irr],
+        ['Cost per kWh over system life', f"Rs. {project.lcoe_inr_per_kwh:.2f}"],
+        ['CO2 Avoided over 25 Years', f"{project.co2_offset_tonnes:g} tonnes"],
+    ]
+    metrics_table = Table(metrics, colWidths=[4 * inch, 2.5 * inch])
+    metrics_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 4), (-1, 5), 'Helvetica-Bold'),
+        ('LINEABOVE', (0, 2), (-1, 2), 1, colors.gray),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+    ]))
+
+    rows = json.loads(project.cashflow_json)
+    milestones = [row for row in rows if row["year"] in (1, 5, 10, 15, 20, 25)]
+    cashflow = [['Year', 'Generation', 'Grid Tariff', 'Savings', 'Cumulative']] + [
+        [
+            str(row["year"]),
+            f"{row['generation_kwh']:,.0f} kWh",
+            f"Rs. {row['grid_tariff_inr']:.2f}",
+            format_inr(row["savings_inr"]),
+            format_inr(row["cumulative_inr"]),
+        ]
+        for row in milestones
+    ]
+    cashflow_table = Table(cashflow, colWidths=[0.7 * inch, 1.4 * inch, 1.2 * inch, 1.5 * inch, 1.7 * inch])
+    cashflow_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e5a')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f6fa')]),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+
+    assumptions = (
+        f"Assumptions: grid tariff Rs. {project.tariff_inr_per_kwh:g}/kWh rising {project.tariff_escalation_pct:g}% a year; "
+        f"{project.export_ratio_pct:g}% of generation exported as annual surplus at Rs. {project.export_tariff_inr_per_kwh:g}/kWh; "
+        f"O&M {project.om_cost_pct:g}% of system cost a year; {project.degradation_rate:g}% annual panel degradation; "
+        f"{project.discount_rate_pct:g}% discount rate. CO2 at the CEA grid emission factor, "
+        f"0.710 t/MWh (CO2 Baseline Database v21.0, FY 2024-25). These are projections: actual "
+        f"savings depend on consumption, tariff revisions and system performance."
+    )
+
+    return [
+        PageBreak(),
+        Paragraph("FINANCIAL SUMMARY", title_style),
+        metrics_table,
+        Spacer(1, 24),
+        Paragraph("CASHFLOW", h2_style),
+        cashflow_table,
+        Spacer(1, 18),
+        Paragraph(assumptions, note_style),
+    ]
+
+
 def generate_project_pdf(project: SolarProject, output_path: str):
     """Generates a dynamic PDF based on actual DB calculations tying closely to the PDF visual layout."""
     
@@ -94,6 +181,18 @@ def generate_project_pdf(project: SolarProject, output_path: str):
         ('TOPPADDING', (0, 0), (-1, -1), 15),
     ]))
     story.append(gen_table)
+
+    # Tell the reader whether generation rests on site data or the regional estimate.
+    if project.irradiance_source == "pvgis":
+        source_note = (
+            f"Irradiance source: PVGIS (EU JRC), {round(project.irradiance_h_annual)} kWh/m²/yr in-plane "
+            f"at {project.tilt_deg:g}° tilt, {project.azimuth_deg:g}° azimuth, "
+            f"adjusted ×{project.irradiance_calibration:g} for regional conditions."
+        )
+    else:
+        source_note = "Irradiance source: regional estimate (PVGIS unavailable at time of calculation)."
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(source_note, styles['Italic']))
     story.append(Spacer(1, 30))
     
     # Losses Breakdown
@@ -139,7 +238,9 @@ def generate_project_pdf(project: SolarProject, output_path: str):
         ('BOX', (2, 0), (2, -1), 1, colors.lightgrey),
     ]))
     story.append(summary_table)
-    
+
+    story.extend(_financial_page(project, title_style, h2_style, styles['Italic']))
+
     try:
         doc.build(story)
         return True

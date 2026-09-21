@@ -34,8 +34,8 @@ const app = {
             const card = document.createElement('div');
             card.className = 'card project-card';
             card.innerHTML = `
-                <h3>${p.project_name}</h3>
-                <p><strong>Client:</strong> ${p.client_name}</p>
+                <h3>${esc(p.project_name)}</h3>
+                <p><strong>Client:</strong> ${esc(p.client_name)}</p>
                 <p><strong>System:</strong> ${p.capacity_kwp || '?'} kWp</p>
                 <p><strong>Date:</strong> ${new Date(p.created_at).toLocaleDateString()}</p>
             `;
@@ -68,6 +68,9 @@ const app = {
                 inverter_model: document.getElementById('inverter_model').value,
                 roof_area_sqm: parseFloat(document.getElementById('roof_area_sqm').value),
                 degradation_rate: parseFloat(document.getElementById('degradation_rate').value),
+                tilt_deg: parseFloat(document.getElementById('tilt_deg').value),
+                azimuth_deg: parseFloat(document.getElementById('azimuth_deg').value),
+                irradiance_calibration: parseFloat(document.getElementById('irradiance_calibration').value),
 
                 temp_loss_pct: parseFloat(document.getElementById('temp_loss_pct').value),
                 shading_loss_pct: parseFloat(document.getElementById('shading_loss_pct').value),
@@ -76,6 +79,18 @@ const app = {
                 mismatch_loss_pct: parseFloat(document.getElementById('mismatch_loss_pct').value),
                 dc_wiring_loss_pct: parseFloat(document.getElementById('dc_wiring_loss_pct').value),
                 ac_wiring_loss_pct: parseFloat(document.getElementById('ac_wiring_loss_pct').value),
+
+                system_cost_inr: parseFloat(document.getElementById('system_cost_inr').value),
+                // Blank means "auto-calculate", which the API reads as null.
+                subsidy_inr: document.getElementById('subsidy_inr').value === ''
+                    ? null
+                    : parseFloat(document.getElementById('subsidy_inr').value),
+                tariff_inr_per_kwh: parseFloat(document.getElementById('tariff_inr_per_kwh').value),
+                tariff_escalation_pct: parseFloat(document.getElementById('tariff_escalation_pct').value),
+                export_ratio_pct: parseFloat(document.getElementById('export_ratio_pct').value),
+                export_tariff_inr_per_kwh: parseFloat(document.getElementById('export_tariff_inr_per_kwh').value),
+                om_cost_pct: parseFloat(document.getElementById('om_cost_pct').value),
+                discount_rate_pct: parseFloat(document.getElementById('discount_rate_pct').value),
             };
 
             // 1. Create project
@@ -119,6 +134,13 @@ const app = {
         document.getElementById('r_annual_mwh').textContent = `${mwh} MWh`;
         document.getElementById('r_specific_yield').textContent = `${p.specific_yield} kWh/kWp`;
         document.getElementById('r_pr').textContent = `${p.performance_ratio.toFixed(1)}%`;
+
+        const sourceEl = document.getElementById('r_irradiance_source');
+        const fromPvgis = p.irradiance_source === 'pvgis';
+        sourceEl.textContent = fromPvgis
+            ? `Irradiance source: PVGIS · ${Math.round(p.irradiance_h_annual)} kWh/m²/yr in-plane at ${p.tilt_deg}° tilt, ${p.azimuth_deg}° azimuth · calibration ×${p.irradiance_calibration}`
+            : 'Irradiance source: regional estimate. PVGIS was unavailable, so these figures are not site-specific. Recalculate before sending.';
+        sourceEl.classList.toggle('is-fallback', !fromPvgis);
 
         // Chart
         if (p.monthly_gen_json) {
@@ -167,6 +189,27 @@ const app = {
 
         const year25Ratio = Math.round((p.year25_output_mwh / mwh) * 100);
         document.getElementById('r_degradation_pct').textContent = `(${year25Ratio}% of Year 1)`;
+
+        this.renderFinancials(p);
+    },
+
+    renderFinancials(p) {
+        // Projects without a system cost have no financials; hide rather than show blanks.
+        const section = document.getElementById('financial-section');
+        section.hidden = p.net_investment_inr == null;
+        if (section.hidden) return;
+
+        const set = (id, text) => { document.getElementById(id).textContent = text; };
+        set('r_net_investment', formatInr(p.net_investment_inr));
+        set('r_subsidy', `${formatInr(p.system_cost_inr)} less ${formatInr(p.subsidy_applied_inr)} subsidy`);
+        set('r_payback', p.payback_years == null ? 'Beyond 25 yrs' : `${p.payback_years} yrs`);
+        set('r_year1_savings', `${formatInr(p.year1_savings_inr)} saved in year 1`);
+        set('r_lifetime_savings', formatInr(p.lifetime_net_savings_inr));
+        set('r_irr', p.irr_pct == null ? 'IRR not applicable' : `${p.irr_pct}% IRR`);
+        set('r_co2', `${p.co2_offset_tonnes} t`);
+        set('r_lcoe', `₹${p.lcoe_inr_per_kwh.toFixed(2)}/kWh over system life`);
+
+        chartManager.renderCashflowChart('cashflowChart', p.cashflow_json, p.net_investment_inr);
     },
 
     downloadPdf() {

@@ -15,3 +15,7 @@ build/
 *.png
 temp_pdfs/
 task
+
+# macOS AppleDouble files (external volume)
+._*
+.DS_Store
