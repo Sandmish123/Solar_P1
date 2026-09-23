@@ -27,6 +27,7 @@ class ProjectBase(BaseModel):
 
     temp_loss_pct: float = 11.5
     shading_loss_pct: float = 0.0
+    shading_auto: bool = Field(False, description="Estimate shading from OSM building geometry instead of using shading_loss_pct")
     soiling_loss_pct: float = 3.0
     inverter_loss_pct: float = 3.0
     mismatch_loss_pct: float = 2.0
@@ -41,6 +42,8 @@ class ProjectBase(BaseModel):
     export_tariff_inr_per_kwh: float = Field(3.0, ge=0, le=50)
     om_cost_pct: float = Field(1.0, ge=0, le=10, description="Annual O&M, % of system cost")
     discount_rate_pct: float = Field(8.0, ge=0, le=30)
+    inverter_replacement_year: int = Field(12, ge=0, le=25, description="Year the inverter is replaced; 0 disables")
+    inverter_replacement_cost_inr: Optional[float] = Field(None, gt=0, le=1e9, description="Overrides the default share of system cost")
 
 
 class ProjectCreate(ProjectBase):
@@ -48,7 +51,8 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(ProjectBase):
-    pass
+    """Full replace: every required field must be sent, and omitted optional fields
+    are cleared."""
 
 
 class ProjectResponse(ProjectBase):
@@ -75,7 +79,12 @@ class ProjectResponse(ProjectBase):
     lifetime_net_savings_inr: Optional[float] = None
     lcoe_inr_per_kwh: Optional[float] = None
     co2_offset_tonnes: Optional[float] = None
+    inverter_replacement_applied_inr: Optional[float] = None
     cashflow_json: Optional[str] = None
+    shading_computed_pct: Optional[float] = None
+    shading_neighbour_count: Optional[int] = None
+    shading_heights_assumed: Optional[int] = None
+    shading_monthly_json: Optional[str] = None
 
     is_calculated: bool
     created_at: datetime

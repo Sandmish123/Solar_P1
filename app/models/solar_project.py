@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, text
+from sqlalchemy.sql import expression
 from sqlalchemy.sql import func
 from app.calculations.solar import DEFAULT_IRRADIANCE_CALIBRATION
 from app.database.session import Base
@@ -37,6 +38,8 @@ class SolarProject(Base):
     # Loss Parameters
     temp_loss_pct = Column(Float, default=11.5)
     shading_loss_pct = Column(Float, default=0.0)
+    # Off by default: turning it on would silently change every existing proposal.
+    shading_auto = Column(Boolean, default=False, server_default=expression.false())
     soiling_loss_pct = Column(Float, default=3.0)
     inverter_loss_pct = Column(Float, default=3.0)
     mismatch_loss_pct = Column(Float, default=2.0)
@@ -52,6 +55,9 @@ class SolarProject(Base):
     export_tariff_inr_per_kwh = Column(Float, default=3.0, server_default=text("3.0"))
     om_cost_pct = Column(Float, default=1.0, server_default=text("1.0"))
     discount_rate_pct = Column(Float, default=8.0, server_default=text("8.0"))
+    # 0 disables; cost defaults to a share of system cost when not given.
+    inverter_replacement_year = Column(Integer, default=12, server_default=text("12"))
+    inverter_replacement_cost_inr = Column(Float, nullable=True)
 
     # Calculation Results
     capacity_kwp = Column(Float, nullable=True)
@@ -76,7 +82,14 @@ class SolarProject(Base):
     lifetime_net_savings_inr = Column(Float, nullable=True)
     lcoe_inr_per_kwh = Column(Float, nullable=True)
     co2_offset_tonnes = Column(Float, nullable=True)
+    inverter_replacement_applied_inr = Column(Float, nullable=True)
     cashflow_json = Column(Text, nullable=True)  # 25 yearly rows, JSON string
+
+    # Shading estimated from OSM geometry (always reported; applied only when shading_auto)
+    shading_computed_pct = Column(Float, nullable=True)
+    shading_neighbour_count = Column(Integer, nullable=True)
+    shading_heights_assumed = Column(Integer, nullable=True)
+    shading_monthly_json = Column(Text, nullable=True)
 
     # Metadata
     is_calculated = Column(Boolean, default=False)

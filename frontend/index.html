@@ -20,8 +20,7 @@
             <h1 class="logo-title">Side Hustler Solar Dashboard</h1>
         </div>
         <div class="nav-right">
-            <button id="btnNewProject" class="btn btn-primary" onclick="app.showView('form-view')">+ New
-                Proposal</button>
+            <button id="btnNewProject" class="btn btn-primary" onclick="app.newProject()">+ New Proposal</button>
         </div>
     </nav>
 
@@ -31,6 +30,9 @@
         <section id="dashboard-view" class="view active">
             <div class="header-actions">
                 <h2>Recent Proposals</h2>
+                <label class="sr-only" for="project-search">Search proposals</label>
+                <input type="search" id="project-search" class="search-input" autocomplete="off"
+                    placeholder="Search client or project…" oninput="app.onSearchInput()">
             </div>
 
             <div id="projects-grid" class="grid-container">
@@ -43,7 +45,7 @@
         <section id="form-view" class="view hidden">
             <div class="header-actions">
                 <button class="btn btn-icon" onclick="app.showView('dashboard-view')">← Back</button>
-                <h2>Create Solar Proposal</h2>
+                <h2 id="form-heading">Create Solar Proposal</h2>
             </div>
 
             <form id="project-form" onsubmit="app.handleFormSubmit(event)">
@@ -53,30 +55,29 @@
                         <h3>1. Project Details</h3>
                         <div class="input-group">
                             <label>Project Name</label>
-                            <input type="text" id="project_name" required value="New Solar Project">
+                            <input type="text" id="project_name" required placeholder="Sharma Residence">
                         </div>
                         <div class="input-group">
                             <label>Client Name</label>
-                            <input type="text" id="client_name" required value="Mr.Gurpreet">
+                            <input type="text" id="client_name" required placeholder="Mr. Sharma">
                         </div>
                         <div class="input-group">
                             <label>Site Address</label>
-                            <input type="text" id="site_address" required
-                                value="22A/505, Udyog Vihar, Sector 22, Gurugram">
+                            <input type="text" id="site_address" required placeholder="Sector 56, Gurugram, Haryana">
                         </div>
                         <div class="input-row">
                             <div class="input-group">
                                 <label>Latitude</label>
-                                <input type="number" step="0.000001" id="latitude" required value="28.507563">
+                                <input type="number" step="0.000001" id="latitude" required placeholder="28.507563">
                             </div>
                             <div class="input-group">
                                 <label>Longitude</label>
-                                <input type="number" step="0.000001" id="longitude" required value="77.061796">
+                                <input type="number" step="0.000001" id="longitude" required placeholder="77.061796">
                             </div>
                         </div>
                         <div class="input-group">
                             <label>Date</label>
-                            <input type="text" id="date" required value="20/7/2026">
+                            <input type="text" id="date" required placeholder="DD/MM/YYYY" pattern="\d{1,2}/\d{1,2}/\d{4}" title="DD/MM/YYYY">
                         </div>
                     </div>
 
@@ -86,28 +87,28 @@
                         <div class="input-row">
                             <div class="input-group">
                                 <label>Number of Panels</label>
-                                <input type="number" id="num_panels" required min="1" value="15">
+                                <input type="number" id="num_panels" required min="1" placeholder="15">
                             </div>
                             <div class="input-group">
                                 <label>Panel Wattage (W)</label>
-                                <input type="number" id="panel_wattage" required min="1" value="635">
+                                <input type="number" id="panel_wattage" required min="1" placeholder="635">
                             </div>
                         </div>
                         <div class="input-group">
                             <label>Panel Model</label>
-                            <input type="text" id="panel_model" required value="Luminous Solar LUM 635TG132 Bifi-GL">
+                            <input type="text" id="panel_model" required placeholder="Luminous Solar LUM 635TG132 Bifi-GL">
                         </div>
                         <div class="input-group">
                             <label>Inverter Model</label>
-                            <input type="text" id="inverter_model" required value="Luminous NXI 320">
+                            <input type="text" id="inverter_model" required placeholder="Luminous NXI 320">
                         </div>
                         <div class="input-group">
                             <label>Roof Area (m²)</label>
-                            <input type="number" id="roof_area_sqm" required value="189">
+                            <input type="number" id="roof_area_sqm" required placeholder="189">
                         </div>
                         <div class="input-group">
                             <label>Degradation Rate (% per year)</label>
-                            <input type="number" step="0.1" id="degradation_rate" value="0.7">
+                            <input type="number" step="0.1" id="degradation_rate" required min="0" max="5" value="0.7">
                         </div>
                         <div class="input-row">
                             <div class="input-group">
@@ -129,8 +130,15 @@
 
                     <!-- Losses Config Card -->
                     <div class="card form-card full-width">
-                        <h3>3. System Losses (%)</h3>
-                        <div class="loss-grid">
+                        <details class="advanced">
+                            <summary>3. System Losses (%)<span class="advanced-hint">defaults suit most rooftops</span></summary>
+                            <label class="checkbox-row" for="shading_auto">
+                                <input type="checkbox" id="shading_auto" aria-describedby="shading_auto_hint">
+                                <span>Estimate shading from nearby buildings (OpenStreetMap)
+                                    <small id="shading_auto_hint" class="text-gray">Replaces the Shading value below. Building heights are often missing from OSM and are then assumed, so check the count on the report.</small>
+                                </span>
+                            </label>
+                            <div class="loss-grid">
                             <div class="input-group">
                                 <label>Temperature</label>
                                 <input type="number" step="0.1" id="temp_loss_pct" required value="11.5">
@@ -159,7 +167,8 @@
                                 <label>AC Wiring</label>
                                 <input type="number" step="0.1" id="ac_wiring_loss_pct" required value="0.0">
                             </div>
-                        </div>
+                            </div>
+                        </details>
                     </div>
 
                     <!-- Financials Card -->
@@ -176,6 +185,10 @@
                                     aria-describedby="subsidy_inr_hint">
                                 <small id="subsidy_inr_hint" class="text-gray">Blank = PM Surya Ghar residential. 0 for commercial.</small>
                             </div>
+                        </div>
+                        <details class="advanced">
+                            <summary>Tariff &amp; return assumptions<span class="advanced-hint">defaults suit most homes</span></summary>
+                            <div class="field-grid">
                             <div class="input-group">
                                 <label for="tariff_inr_per_kwh">Grid Tariff (₹/kWh)</label>
                                 <input type="number" step="0.01" id="tariff_inr_per_kwh" required min="0.01" max="50" value="8.0">
@@ -202,7 +215,19 @@
                                 <label for="discount_rate_pct">Discount Rate (%)</label>
                                 <input type="number" step="0.1" id="discount_rate_pct" required min="0" max="30" value="8.0">
                             </div>
-                        </div>
+                            <div class="input-group">
+                                <label for="inverter_replacement_year">Inverter Replaced in Year</label>
+                                <input type="number" step="1" id="inverter_replacement_year" required min="0" max="25"
+                                    value="12" aria-describedby="inverter_replacement_year_hint">
+                                <small id="inverter_replacement_year_hint" class="text-gray">0 = never.</small>
+                            </div>
+                            <div class="input-group">
+                                <label for="inverter_replacement_cost_inr">Inverter Cost (&#8377;)</label>
+                                <input type="number" step="1" id="inverter_replacement_cost_inr" min="1"
+                                    placeholder="Auto: 12% of system cost">
+                            </div>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
@@ -223,7 +248,8 @@
                     <h2>Energy Report</h2>
                     <div class="header-right">
                         <button class="btn btn-secondary" onclick="app.showView('dashboard-view')">Close</button>
-                        <button class="btn btn-secondary" onclick="mapManager.open3DView()"
+                        <button class="btn btn-secondary" onclick="app.editCurrent()">Edit</button>
+                        <button class="btn btn-secondary btn-3d-view" onclick="mapManager.open3DView()"
                             style="background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; box-shadow: 0 4px 12px rgba(16,185,129,0.3);">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -294,6 +320,7 @@
 
                     <!-- LOSSES BREAKDOWN -->
                     <div class="section-title mt-xl">LOSSES BREAKDOWN</div>
+                    <div class="shading-note" id="r_shading_note" hidden></div>
                     <div class="losses-container" id="r_losses">
                         <!-- Populated via JS -->
                     </div>
@@ -337,6 +364,8 @@
                                 <div class="sub-stat" id="r_lcoe">-</div>
                             </div>
                         </div>
+
+                        <div class="sub-stat text-gray" id="r_replacement_note" hidden></div>
 
                         <div class="section-title mt-xl">CUMULATIVE CASHFLOW</div>
                         <div class="chart-container">
@@ -438,10 +467,10 @@
 
     <!-- Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/js/api.js?v=7"></script>
-    <script src="/js/charts.js?v=7"></script>
+    <script src="/js/api.js?v=10"></script>
+    <script src="/js/charts.js?v=10"></script>
     <script src="/js/3d-model.js?v=6"></script>
-    <script src="/js/app.js?v=7"></script>
+    <script src="/js/app.js?v=10"></script>
 </body>
 
 </html>

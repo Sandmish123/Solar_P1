@@ -4,8 +4,13 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.charts.barcharts import VerticalBarChart
 from app.models.solar_project import SolarProject
 import json
+
+MONSOON_COLOR = colors.HexColor('#fbbc04')
+REGULAR_COLOR = colors.HexColor('#4285f4')
 
 
 def format_inr(amount: float) -> str:
@@ -21,6 +26,69 @@ def format_inr(amount: float) -> str:
         groups.insert(0, head)
     sign = "-" if round(amount) < 0 else ""
     return f"{sign}Rs. {','.join(groups + [tail])}"
+
+
+def _page_decorations(project):
+    """Footer band with the project name and page number, drawn on every page."""
+    caption = f"{project.project_name} - {project.capacity_kwp} kWp"[:70]
+
+    def decorate(canvas, doc):
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor('#dcdde1'))
+        canvas.line(40, 42, A4[0] - 40, 42)
+        canvas.setFont('Helvetica', 8)
+        canvas.setFillColor(colors.HexColor('#8a96a8'))
+        canvas.drawString(40, 30, caption)
+        canvas.drawRightString(A4[0] - 40, 30, f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    return decorate
+
+
+def _monthly_chart(monthly: list) -> Drawing:
+    """Monthly generation bars, drawn with ReportLab primitives so the PDF needs no
+    headless browser to render the same chart the web report shows."""
+    drawing = Drawing(470, 165)
+    chart = VerticalBarChart()
+    chart.x, chart.y = 35, 28
+    chart.width, chart.height = 420, 120
+    chart.data = [[row["value_kwh"] for row in monthly]]
+    chart.categoryAxis.categoryNames = [row["month"] for row in monthly]
+    chart.categoryAxis.labels.fontSize = 7
+    chart.valueAxis.valueMin = 0
+    chart.valueAxis.labels.fontSize = 7
+    chart.valueAxis.labelTextFormat = '%0.0f'
+    chart.barSpacing = 1
+    chart.bars.strokeWidth = 0
+    for index, row in enumerate(monthly):
+        chart.bars[(0, index)].fillColor = MONSOON_COLOR if row["season"] == "Monsoon" else REGULAR_COLOR
+    drawing.add(chart)
+    return drawing
+
+
+def _monthly_table(monthly: list) -> Table:
+    """Twelve months as three month/kWh column pairs, to stay compact."""
+    data = [['Month', 'kWh'] * 3]
+    for row_index in range(4):
+        row = []
+        for column in range(3):
+            month = monthly[row_index + column * 4]
+            row += [month['month'], f"{month['value_kwh']:,.0f}"]
+        data.append(row)
+
+    table = Table(data, colWidths=[0.8 * inch, 1.3 * inch] * 3)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f5f6fa')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
+        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dcdde1')),
+    ]))
+    return table
 
 
 def _financial_page(project: SolarProject, title_style, h2_style, note_style) -> list:
@@ -41,6 +109,11 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
         ['Cost per kWh over system life', f"Rs. {project.lcoe_inr_per_kwh:.2f}"],
         ['CO2 Avoided over 25 Years', f"{project.co2_offset_tonnes:g} tonnes"],
     ]
+    if project.inverter_replacement_applied_inr:
+        metrics.insert(4, [
+            f'Inverter Replacement (year {project.inverter_replacement_year})',
+            f"- {format_inr(project.inverter_replacement_applied_inr)}",
+        ])
     metrics_table = Table(metrics, colWidths=[4 * inch, 2.5 * inch])
     metrics_table.setStyle(TableStyle([
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
@@ -52,7 +125,10 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
     ]))
 
     rows = json.loads(project.cashflow_json)
-    milestones = [row for row in rows if row["year"] in (1, 5, 10, 15, 20, 25)]
+    # Show the replacement year too, so the dip in that year is visible rather than
+    # buried between milestones.
+    shown = {1, 5, 10, 15, 20, 25} | ({project.inverter_replacement_year} if project.inverter_replacement_applied_inr else set())
+    milestones = [row for row in rows if row["year"] in shown]
     cashflow = [['Year', 'Generation', 'Grid Tariff', 'Savings', 'Cumulative']] + [
         [
             str(row["year"]),
@@ -74,10 +150,19 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
     ]))
 
+    if project.inverter_replacement_applied_inr:
+        replacement_note = (
+            f"an inverter replacement of {format_inr(project.inverter_replacement_applied_inr)} "
+            f"in year {project.inverter_replacement_year}"
+        )
+    else:
+        replacement_note = "no inverter replacement"
+
     assumptions = (
         f"Assumptions: grid tariff Rs. {project.tariff_inr_per_kwh:g}/kWh rising {project.tariff_escalation_pct:g}% a year; "
         f"{project.export_ratio_pct:g}% of generation exported as annual surplus at Rs. {project.export_tariff_inr_per_kwh:g}/kWh; "
-        f"O&M {project.om_cost_pct:g}% of system cost a year; {project.degradation_rate:g}% annual panel degradation; "
+        f"O&M {project.om_cost_pct:g}% of system cost a year; {replacement_note}; "
+        f"{project.degradation_rate:g}% annual panel degradation; "
         f"{project.discount_rate_pct:g}% discount rate. CO2 at the CEA grid emission factor, "
         f"0.710 t/MWh (CO2 Baseline Database v21.0, FY 2024-25). These are projections: actual "
         f"savings depend on consumption, tariff revisions and system performance."
@@ -193,8 +278,8 @@ def generate_project_pdf(project: SolarProject, output_path: str):
         source_note = "Irradiance source: regional estimate (PVGIS unavailable at time of calculation)."
     story.append(Spacer(1, 6))
     story.append(Paragraph(source_note, styles['Italic']))
-    story.append(Spacer(1, 30))
-    
+    story.append(Spacer(1, 24))
+
     # Losses Breakdown
     story.append(Paragraph("LOSSES BREAKDOWN", h2_style))
     losses_data = [
@@ -218,6 +303,20 @@ def generate_project_pdf(project: SolarProject, output_path: str):
     ])
     losses_table.setStyle(losses_table_style)
     story.append(losses_table)
+
+    if project.shading_computed_pct is not None:
+        assumed = project.shading_heights_assumed or 0
+        caveat = (
+            f" Heights were absent from OpenStreetMap for {assumed} of them and assumed at 6 m."
+            if assumed else ""
+        )
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(
+            f"Shading of {project.shading_computed_pct:g}% was estimated from the geometry of "
+            f"{project.shading_neighbour_count} neighbouring building(s) and the site's sun path."
+            f"{caveat}",
+            styles['Italic'],
+        ))
     story.append(Spacer(1, 30))
     
     # System Summary
@@ -239,10 +338,19 @@ def generate_project_pdf(project: SolarProject, output_path: str):
     ]))
     story.append(summary_table)
 
+    if project.monthly_gen_json:
+        monthly = json.loads(project.monthly_gen_json)
+        story.append(PageBreak())
+        story.append(Paragraph("MONTHLY GENERATION", title_style))
+        story.append(_monthly_chart(monthly))
+        story.append(Spacer(1, 16))
+        story.append(_monthly_table(monthly))
+
     story.extend(_financial_page(project, title_style, h2_style, styles['Italic']))
 
     try:
-        doc.build(story)
+        decorate = _page_decorations(project)
+        doc.build(story, onFirstPage=decorate, onLaterPages=decorate)
         return True
     except Exception as e:
         print(f"Error generating PDF: {e}")

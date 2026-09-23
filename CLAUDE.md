@@ -5,9 +5,9 @@ site irradiance from PVGIS and runs a deterministic calculation engine → SPA
 renders a report (Chart.js + MapLibre 3D site view) → ReportLab generates a
 downloadable PDF proposal. Used by a solar business: the PDFs go to paying customers.
 
-Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. Phases 0 (unblock),
-1 (PVGIS) and 2 (financials) are done; next is Phase 3 (UX: edit/delete, validation,
-mobile, PDF redesign).
+Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. All four phases are
+done: 0 (unblock), 1 (PVGIS irradiance), 2 (financials), 3 (UX), 4 (geometry-derived
+shading).
 
 ## Commands
 
@@ -36,15 +36,20 @@ Windows: `start.bat` / `stop.bat` (port 8000, needs `.venv`).
 | `app/services/irradiance.py` | PVGIS client, cache, fallback. The only network I/O in the calc path |
 | `app/calculations/solar.py` | **Pure functions, no DB/IO.** The only place physics lives |
 | `app/calculations/financial.py` | **Pure functions, no DB/IO.** Subsidy, cashflow, payback, IRR, NPV, LCOE, CO₂ |
+| `app/calculations/solar_position.py` | **Pure.** Sun elevation/azimuth, ported from `3d-model.js` |
+| `app/calculations/shading.py` | **Pure.** Horizon profile from footprints, year sweep, shading loss |
+| `app/services/buildings.py` | Overpass client, cache, no-geometry fallback. Only runs when `shading_auto` |
+| `app/models/building_cache.py` | `building_cache` — OSM footprints per ~11 m cell |
 | `app/api/routes/projects.py` | `/api/projects` CRUD, `POST /{id}/calculate` (async), `GET /{id}/report/pdf` |
 | `app/api/routes/geospatial.py` | `GET /api/geospatial/building` — Overpass/OSM footprint lookup, falls back to a synthetic box |
-| `app/utils/pdf_generator.py` | ReportLab proposal (financial page when costed) + `format_inr`; returns bool, never raises |
+| `app/utils/pdf_generator.py` | ReportLab proposal: cover, energy, monthly, financial (when costed); page footers; `format_inr` |
 | `frontend/js/api.js` | fetch wrappers + shared helpers `esc()`, `formatInr()` |
-| `frontend/js/app.js` | View switching, form submit (create → calculate → render), report rendering |
+| `frontend/js/app.js` | `FORM_FIELDS` table, create/edit/delete, search, report rendering |
 | `frontend/js/charts.js` | Chart.js monthly bars + cumulative cashflow line; honours reduced motion |
 | `frontend/js/3d-model.js` | `mapManager` — MapLibre map, OSM footprint, CSS-3D panel array, sun-position solver, season/time sliders |
 | `migrations/env.py` | Reads `DATABASE_URL` env first, else `alembic.ini`. New models must be imported here |
 | `tests/fixtures/pvgis_gurugram.json` | Real PVGIS v5_3 response for the reference cell |
+| `tests/fixtures/overpass_gurugram.json` | Real Overpass response (175 buildings) for the reference cell |
 
 Frontend is plain globals (`api`, `app`, `chartManager`, `mapManager`, `esc`) wired
 via inline `onclick` in `index.html`. No bundler, no framework, no npm. Chart.js
@@ -93,15 +98,54 @@ invented price in a customer proposal is worse than a missing section.
   (`solar.generation_by_year`). Self-consumed share valued at the grid tariff,
   escalating yearly; `export_ratio_pct` is the *annual net-metering surplus*,
   paid at a flat export tariff. O&M is flat, as % of system cost.
+- **Inverter replacement**: one mid-life capex, `inverter_replacement_year`
+  (default 12, 0 disables) costing `INVERTER_COST_SHARE` = 12% of system cost
+  unless `inverter_replacement_cost_inr` overrides it. Unlike `shading_auto` this
+  defaults **on**: omitting a cost the customer will certainly pay overstates
+  lifetime savings. It feeds payback, IRR, NPV and LCOE, and both the report and
+  the PDF name the amount and year. Held flat in nominal terms, like O&M.
 - **Metrics** from unrounded values; rounding only for storage. Simple and
   discounted payback (interpolated in the payback year), IRR by bisection on
   [−99%, 1000%], NPV, 25-year net savings (after investment), customer LCOE,
   CO₂ at the CEA v21.0 FY 2024-25 weighted average, 0.710 t/MWh (more
   conservative than the 0.736 combined margin).
-- Pinned reference: 9.525 kWp at ₹55,000/kWp, auto subsidy, ₹8/kWh → **5.2-year
-  payback, 20.0% IRR**. The plan's sanity band is 4–6 years; outside it means a
+- Pinned reference: 9.525 kWp at ₹55,000/kWp, auto subsidy, ₹8/kWh, replacement in
+  year 12 → **5.2-year payback, 19.7% IRR, LCOE ₹3.91**. (Without the replacement:
+  20.0% and ₹3.73.) The plan's sanity band is 4–6 years; outside it means a
   sign error. IRR was cross-checked against Newton's method and a brute-force scan.
 - Money is `float`, rounded to whole rupees. These are projections, not a ledger.
+
+## Shading model (app/calculations/shading.py)
+
+Opt-in per project via `shading_auto`, **off by default** — switching it on changes
+the numbers, so no existing proposal moves on its own. When off, nothing is fetched
+and the operator's `shading_loss_pct` stands.
+
+Method: collapse the surrounding OSM footprints into a **horizon profile** (highest
+obstruction elevation per degree of azimuth), then sweep the sun path for a year,
+weighting each sample by the beam irradiance it would put on the tilted plane. About
+30 ms, so it sits on the request path happily. The computed figure is written to
+`shading_computed_pct` and, while `shading_auto` is on, replaces `shading_loss_pct`
+in the loss stack.
+
+- The horizon uses **exact ray-to-wall intersection per azimuth bin**. An earlier
+  version sampled points along each wall and left gaps the sun shone through, which
+  under-reported shading by ~10x. If you touch `horizon_profile`, keep
+  `test_horizon_angle_matches_trigonometry`: it pins one wall to `atan(rise/distance)`
+  and checks the filled bins are contiguous.
+- The array is one point at roof height (host building's OSM height, else 3 m). No
+  row-to-row self-shading, no variation across a big roof.
+- All irradiance is treated as beam, so the figure **overstates** the real loss:
+  diffuse light still arrives when the sun is blocked. That errs towards
+  under-promising, matching the Phase 1 calibration decision.
+- Reference site: 9.11% annual, December 30% vs June 0.7%. That takes PR from 78.5%
+  to 69.4% and payback from 5.2 to 5.9 years — this feature moves real money.
+
+**Height data is the weak link.** In the reference Gurugram neighbourhood *all 175*
+buildings lack a height tag, so every one falls back to `ASSUMED_HEIGHT_M = 6.0`
+(two storeys). The result is therefore driven by that assumption, not by survey data.
+`shading_heights_assumed` carries the count, and the report and PDF both print it.
+Never present the number without that caveat.
 
 ## Irradiance service behaviour
 
@@ -121,10 +165,26 @@ invented price in a customer proposal is worse than a missing section.
   modifying other objects in that session (see `calculate_project`).
 - PVGIS v5_3, no API key, 10 s timeout.
 
+Overpass (`buildings.py`) follows the same shape: integer cache keys on a finer
+~11 m grid, queried at the cell centre, any failure returning None so the caller
+falls back to the operator's value instead of inventing a skyline. It retries once
+(15 s timeout, ~31 s worst case) because the public instance returns 504 under load
+often enough that a single attempt usually fails.
+
 ## Conventions
 
 - Routes stay thin: validate → call `project_service` → map None to 404. No DB
   queries in route bodies.
+- **`PUT` is a full replace**, not a partial update: every required field must be
+  sent and an omitted optional field is cleared. The edit form always submits the
+  whole form. If a partial update is ever needed, add a `PATCH`.
+- Form fields live in one place: `FORM_FIELDS` in `app.js`, whose ids match both
+  the `<input id>` and the `ProjectBase` field name. Adding an input means adding
+  a row there, or it silently never reaches the API.
+- Prefer the browser: `required`/`min`/`max` for validation, `<details>` for
+  collapsible sections, `form.reset()` for defaults, `confirm()` for destructive
+  actions. `app.init()` only adds what the platform lacks — opening a `<details>`
+  that holds an invalid field, since native validation cannot focus a hidden input.
 - Calculation functions stay pure and independently testable; the service layer
   owns the dict ⇄ ORM translation and all I/O.
 - Loss/degradation params are percentages (11.5 means 11.5%), stored as floats.
@@ -140,10 +200,14 @@ invented price in a customer proposal is worse than a missing section.
   `app.js` breaks with `ReferenceError`s on the shared helpers.
 - Currency: `₹` + `formatInr()` in the browser; `format_inr()` → `Rs. 4,45,875`
   in the PDF, because the built-in Helvetica has no ₹ glyph.
+- The sun solver exists twice on purpose: Python for the engine, JavaScript in
+  `3d-model.js` so dragging the time slider stays local.
+  `test_python_and_javascript_solvers_agree` runs both through node and pins them to
+  1e-6, so they cannot drift. Change one, change the other.
 - **Tests never touch the network.** The autouse `offline_pvgis` fixture in
-  `conftest.py` replaces `fetch_pvgis` and returns the list of calls made. To
-  test the real HTTP client, route it through `httpx.MockTransport` (see
-  `test_irradiance.py`). The conftest points `DATABASE_URL` at a temp file with
+  `conftest.py` replaces `fetch_pvgis`, and `offline_overpass` replaces
+  `fetch_buildings`; both return the list of calls made. To test the real HTTP
+  client, route it through `httpx.MockTransport` (see `test_irradiance.py`). The conftest points `DATABASE_URL` at a temp file with
   hard assignment, because the schema fixture drops tables.
 - Migrations use `op.batch_alter_table` so they run on both SQLite and Postgres.
   Verify with `alembic upgrade head && alembic downgrade -1 && alembic upgrade head`
@@ -164,15 +228,17 @@ invented price in a customer proposal is worse than a missing section.
 - The `/calculate` route is async but uses the sync SQLAlchemy `Session`, so DB
   calls run on the event loop. Fine for sub-ms queries; move to an async engine
   if calculation volume grows.
-- `geospatial.py` uses **sync** `httpx.post` with a 20s timeout inside a sync
-  route — blocks a threadpool worker for up to 20s per request. No caching, no
-  rate-limit handling against the public Overpass instance.
-- PUT has hybrid semantics. `ProjectUpdate` inherits `ProjectBase`, so required
-  fields must always be sent; `update_project`'s `exclude_unset=True` then leaves
-  **omitted** defaulted fields unchanged. Clearing an optional field (e.g.
-  `system_cost_inr`) needs an explicit `null`. (Phase 3: make it a real partial update.)
-- The form flow is create-then-calculate. If calculate fails (e.g. 422 on bad
-  coordinates), the project already exists uncalculated, and there's no edit UI
-  yet — resubmitting creates a duplicate. (Phase 3.)
-- `createProject` in `api.js` shows `[object Object]` for Pydantic 422s, because
-  `detail` is an array there. (Phase 3 validation.)
+- `geospatial.py` is a **second, older Overpass caller** for the 3D view: sync
+  `httpx.post` with a 20 s timeout inside a sync route, so it blocks a threadpool
+  worker, and it has no cache. `services/buildings.py` is the good one; the route
+  should eventually be moved onto it.
+- Overpass is flaky: expect 504s, and expect the shading estimate to be absent
+  sometimes. Recalculating is the fix, and a success is cached permanently.
+- The form is still create-then-calculate, but a failed calculation no longer
+  duplicates: `handleFormSubmit` keeps the new id in `editingId`, so a retry
+  updates that project.
+- `search` uses a leading-wildcard `ILIKE`, which cannot use the name indexes.
+  Fine at proposal volumes; needs a trigram index if the dashboard slows down.
+- The PDF has no logo or brand colours: there is no logo asset in the repo, and
+  inventing branding for a real business would be wrong. `_page_decorations`
+  in `pdf_generator.py` is where one would go.

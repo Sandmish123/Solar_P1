@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
 from starlette.background import BackgroundTask
@@ -22,8 +22,13 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=List[ProjectResponse])
-def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return project_service.get_projects(db=db, skip=skip, limit=limit)
+def read_projects(
+    skip: int = 0,
+    limit: int = 100,
+    search: str = Query(None, max_length=100, description="Matches project or client name"),
+    db: Session = Depends(get_db),
+):
+    return project_service.get_projects(db=db, skip=skip, limit=limit, search=search)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

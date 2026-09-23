@@ -8,6 +8,7 @@ from alembic import context
 
 from app.models.solar_project import Base
 from app.models.irradiance_cache import IrradianceCache  # noqa: F401  (registers the table)
+from app.models.building_cache import BuildingCache  # noqa: F401  (registers the table)
 
 # Alembic Config object
 config = context.config

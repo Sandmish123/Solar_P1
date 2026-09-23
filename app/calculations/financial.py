@@ -21,6 +21,14 @@ GRID_EMISSION_FACTOR_KG_PER_KWH = 0.710
 
 PROJECTION_YEARS = 25
 
+# String inverters are usually replaced once in a 25-year system life. Leaving that
+# cost out makes the lifetime savings look better than they will be, so it is modelled
+# by default rather than opted into. Typical Indian rooftop inverter cost is around a
+# tenth of the installed price; the operator can override the amount, or set the year
+# to 0 for a system where it does not apply.
+INVERTER_COST_SHARE = 0.12
+DEFAULT_INVERTER_REPLACEMENT_YEAR = 12
+
 FINANCIAL_RESULT_FIELDS = (
     "subsidy_applied_inr",
     "net_investment_inr",
@@ -32,6 +40,7 @@ FINANCIAL_RESULT_FIELDS = (
     "lifetime_net_savings_inr",
     "lcoe_inr_per_kwh",
     "co2_offset_tonnes",
+    "inverter_replacement_applied_inr",
     "cashflow_json",
 )
 
@@ -54,24 +63,30 @@ def build_cashflow(
     export_ratio_pct: float,
     export_tariff_inr_per_kwh: float,
     om_cost_inr: float,
+    replacement_year: int = 0,
+    replacement_cost_inr: float = 0.0,
 ) -> list:
     """
     One row per year. Self-consumed units are valued at the grid tariff, which escalates;
     the exported surplus is paid at the export tariff, held flat (regulated APPC-linked
-    rates). O&M is held flat too.
+    rates). O&M is held flat too, as is the inverter replacement, which lands once in
+    `replacement_year` (1-based; 0 disables it).
     """
     rows = []
     for index, generated in enumerate(generation_kwh):
+        year = index + 1
         grid_tariff = tariff_inr_per_kwh * (1 + tariff_escalation_pct / 100) ** index
         exported = generated * export_ratio_pct / 100
         savings = (generated - exported) * grid_tariff + exported * export_tariff_inr_per_kwh
+        replacement = replacement_cost_inr if year == replacement_year else 0.0
         rows.append({
-            "year": index + 1,
+            "year": year,
             "generation_kwh": generated,
             "grid_tariff_inr": grid_tariff,
             "savings_inr": savings,
             "om_inr": om_cost_inr,
-            "net_inr": savings - om_cost_inr,
+            "replacement_inr": replacement,
+            "net_inr": savings - om_cost_inr - replacement,
         })
     return rows
 
@@ -99,8 +114,9 @@ def irr(cashflows: list, low: float = -0.99, high: float = 10.0, iterations: int
     Internal rate of return by bisection. None if NPV doesn't change sign on
     [low, high], e.g. zero investment. Heavily subsidised small systems can exceed
     100%, hence the wide upper bound.
-    ponytail: assumes one sign change (outlay, then inflows). A late O&M-driven
-    negative year could admit a second root; bisection returns one of them.
+    ponytail: assumes one sign change (outlay, then inflows). A replacement year big
+    enough to turn that year negative could admit a second root; bisection returns one
+    of them.
     """
     npv_low = npv(low, cashflows)
     if npv_low * npv(high, cashflows) > 0:
@@ -137,6 +153,13 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
     subsidy = min(subsidy, cost)
     investment = cost - subsidy
 
+    replacement_year = int(inputs.get("inverter_replacement_year") or 0)
+    replacement_cost = inputs.get("inverter_replacement_cost_inr")
+    if replacement_cost is None:
+        replacement_cost = cost * INVERTER_COST_SHARE
+    if not 1 <= replacement_year <= PROJECTION_YEARS or replacement_cost <= 0:
+        replacement_year, replacement_cost = 0, 0.0
+
     generation = generation_by_year(year1_kwh, degradation_pct, PROJECTION_YEARS)
     rows = build_cashflow(
         generation,
@@ -145,6 +168,8 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
         inputs["export_ratio_pct"],
         inputs["export_tariff_inr_per_kwh"],
         cost * inputs["om_cost_pct"] / 100,
+        replacement_year,
+        replacement_cost,
     )
 
     nets = [row["net_inr"] for row in rows]
@@ -152,11 +177,12 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
     discount = [(1 + rate) ** year for year in range(1, PROJECTION_YEARS + 1)]
     return_rate = irr([-investment] + nets)
 
-    # Customer's cost per kWh over the system life: their outlay plus O&M, over
-    # generation, both discounted.
-    lcoe = (investment + sum(row["om_inr"] / d for row, d in zip(rows, discount))) / sum(
-        g / d for g, d in zip(generation, discount)
-    )
+    # Customer's cost per kWh over the system life: their outlay plus O&M and the
+    # inverter replacement, over generation, all discounted.
+    lcoe = (
+        investment
+        + sum((row["om_inr"] + row["replacement_inr"]) / d for row, d in zip(rows, discount))
+    ) / sum(g / d for g, d in zip(generation, discount))
 
     cumulative = -investment
     stored_rows = []
@@ -168,6 +194,7 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
             "grid_tariff_inr": round(row["grid_tariff_inr"], 2),
             "savings_inr": round(row["savings_inr"]),
             "om_inr": round(row["om_inr"]),
+            "replacement_inr": round(row["replacement_inr"]),
             "net_inr": round(row["net_inr"]),
             "cumulative_inr": round(cumulative),
         })
@@ -185,5 +212,6 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
         "lifetime_net_savings_inr": round(sum(nets) - investment),
         "lcoe_inr_per_kwh": round(lcoe, 2),
         "co2_offset_tonnes": round(sum(generation) * GRID_EMISSION_FACTOR_KG_PER_KWH / 1000, 1),
+        "inverter_replacement_applied_inr": round(replacement_cost) if replacement_year else None,
         "cashflow_json": json.dumps(stored_rows),
     }

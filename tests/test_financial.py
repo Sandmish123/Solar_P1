@@ -27,6 +27,8 @@ REFERENCE_INPUTS = {
     "export_tariff_inr_per_kwh": 3.0,
     "om_cost_pct": 1.0,
     "discount_rate_pct": 8.0,
+    "inverter_replacement_year": 12,
+    "inverter_replacement_cost_inr": None,
 }
 
 
@@ -106,8 +108,8 @@ def test_reference_system():
     # The plan's sanity band for this system; outside it means a sign error.
     assert 4 <= res["payback_years"] <= 6
     # Pinned, like the 1401 kWh/kWp anchor: if these move, the model changed.
-    assert res["payback_years"] == 5.2
-    assert res["irr_pct"] == 20.0
+    assert res["payback_years"] == 5.2   # replacement lands after payback
+    assert res["irr_pct"] == 19.7
     assert res["discounted_payback_years"] > res["payback_years"]
 
 
@@ -127,9 +129,20 @@ def test_co2_uses_cea_factor_and_degradation():
 
 
 def test_lcoe_undiscounted_without_om_is_cost_over_energy():
-    res = _run(discount_rate_pct=0.0, om_cost_pct=0.0)
+    # Strip every other cost so LCOE reduces to outlay over lifetime energy.
+    res = _run(discount_rate_pct=0.0, om_cost_pct=0.0, inverter_replacement_year=0)
     lifetime_kwh = sum(generation_by_year(YEAR1_KWH, 0.7, 25))
     assert res["lcoe_inr_per_kwh"] == pytest.approx(res["net_investment_inr"] / lifetime_kwh, abs=0.01)
+
+
+def test_lcoe_includes_the_replacement_capex():
+    without = _run(discount_rate_pct=0.0, om_cost_pct=0.0, inverter_replacement_year=0)
+    with_replacement = _run(discount_rate_pct=0.0, om_cost_pct=0.0, inverter_replacement_cost_inr=100_000)
+    lifetime_kwh = sum(generation_by_year(YEAR1_KWH, 0.7, 25))
+
+    assert with_replacement["lcoe_inr_per_kwh"] == pytest.approx(
+        without["lcoe_inr_per_kwh"] + 100_000 / lifetime_kwh, abs=0.01
+    )
 
 
 def test_no_system_cost_means_no_financials():
@@ -157,3 +170,47 @@ def test_uneconomic_system_never_pays_back():
     res = _run(tariff_inr_per_kwh=0.5, export_tariff_inr_per_kwh=0.0)
     assert res["payback_years"] is None
     assert res["lifetime_net_savings_inr"] < 0
+
+
+# --- inverter replacement --------------------------------------------------
+
+def test_replacement_defaults_to_a_share_of_system_cost():
+    res = _run()
+    assert res["inverter_replacement_applied_inr"] == round(REFERENCE_INPUTS["system_cost_inr"] * 0.12)
+
+
+def test_replacement_lands_in_one_year_only():
+    rows = json.loads(_run()["cashflow_json"])
+    charged = [row["year"] for row in rows if row["replacement_inr"]]
+    assert charged == [12]
+    assert rows[11]["net_inr"] < rows[10]["net_inr"]
+
+
+def test_replacement_reduces_the_return():
+    without = _run(inverter_replacement_year=0)
+    with_replacement = _run()
+
+    assert with_replacement["lifetime_net_savings_inr"] < without["lifetime_net_savings_inr"]
+    assert with_replacement["npv_inr"] < without["npv_inr"]
+    assert with_replacement["irr_pct"] < without["irr_pct"]
+    # It is capex over the same generation, so the cost per kWh rises.
+    assert with_replacement["lcoe_inr_per_kwh"] > without["lcoe_inr_per_kwh"]
+
+
+def test_replacement_can_be_disabled_or_overridden():
+    assert _run(inverter_replacement_year=0)["inverter_replacement_applied_inr"] is None
+    override = _run(inverter_replacement_cost_inr=90_000)
+    assert override["inverter_replacement_applied_inr"] == 90_000
+
+
+@pytest.mark.parametrize("year", [0, 26, 40])
+def test_a_replacement_outside_the_horizon_is_ignored(year):
+    res = _run(inverter_replacement_year=year)
+    assert res["inverter_replacement_applied_inr"] is None
+    assert all(row["replacement_inr"] == 0 for row in json.loads(res["cashflow_json"]))
+
+
+def test_an_early_replacement_delays_payback():
+    late = _run(inverter_replacement_year=12)
+    early = _run(inverter_replacement_year=3, inverter_replacement_cost_inr=200_000)
+    assert early["payback_years"] > late["payback_years"]

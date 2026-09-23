@@ -1,8 +1,13 @@
+import json
+
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from app.models.solar_project import SolarProject
 from app.schemas.solar_project import ProjectCreate, ProjectUpdate
 from app.calculations.financial import perform_financial_calculations
+from app.calculations.shading import DEFAULT_ARRAY_HEIGHT_M, compute_shading, find_host_height
 from app.calculations.solar import perform_all_calculations
+from app.services.buildings import get_buildings
 from app.services.irradiance import get_irradiance
 
 
@@ -10,8 +15,18 @@ def get_project(db: Session, project_id: int):
     return db.query(SolarProject).filter(SolarProject.id == project_id).first()
 
 
-def get_projects(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(SolarProject).offset(skip).limit(limit).all()
+def get_projects(db: Session, skip: int = 0, limit: int = 100, search: str = None):
+    """Newest first. `search` matches project or client name, case-insensitively.
+    ponytail: leading-wildcard LIKE can't use the name indexes; fine at proposal
+    volumes, revisit with a trigram index if the dashboard ever feels slow."""
+    query = db.query(SolarProject)
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(or_(
+            SolarProject.project_name.ilike(pattern),
+            SolarProject.client_name.ilike(pattern),
+        ))
+    return query.order_by(SolarProject.created_at.desc(), SolarProject.id.desc()).offset(skip).limit(limit).all()
 
 
 def create_project(db: Session, project: ProjectCreate):
@@ -25,7 +40,9 @@ def create_project(db: Session, project: ProjectCreate):
 def update_project(db: Session, project_id: int, project: ProjectUpdate):
     db_project = get_project(db, project_id)
     if db_project:
-        update_data = project.model_dump(exclude_unset=True)
+        # PUT is a full replace: an omitted optional field is cleared, not kept.
+        # The edit form always sends every field. Partial updates would be a PATCH.
+        update_data = project.model_dump()
         for key, value in update_data.items():
             setattr(db_project, key, value)
         
@@ -66,12 +83,26 @@ async def calculate_project(db: Session, project_id: int):
         "export_tariff_inr_per_kwh": db_project.export_tariff_inr_per_kwh,
         "om_cost_pct": db_project.om_cost_pct,
         "discount_rate_pct": db_project.discount_rate_pct,
+        "inverter_replacement_year": db_project.inverter_replacement_year,
+        "inverter_replacement_cost_inr": db_project.inverter_replacement_cost_inr,
     }
+
+    shading = await _estimate_shading(db, db_project) if db_project.shading_auto else None
+    if shading:
+        # Replaces the operator's figure only while shading_auto is on.
+        data["shading_loss_pct"] = shading["annual_pct"]
 
     irradiance = await get_irradiance(
         db, db_project.latitude, db_project.longitude, db_project.tilt_deg, db_project.azimuth_deg
     )
     results = perform_all_calculations(data, irradiance)
+    results.update({
+        "shading_loss_pct": data["shading_loss_pct"],
+        "shading_computed_pct": shading["annual_pct"] if shading else None,
+        "shading_neighbour_count": shading["neighbour_count"] if shading else None,
+        "shading_heights_assumed": shading["heights_assumed"] if shading else None,
+        "shading_monthly_json": json.dumps(shading["monthly_pct"]) if shading else None,
+    })
     # Always written, so removing the system cost clears stale financials.
     results.update(perform_financial_calculations(
         financial_inputs, results["capacity_kwp"], results["annual_gen_kwh"], data["degradation_rate"]
@@ -84,6 +115,22 @@ async def calculate_project(db: Session, project_id: int):
     db.commit()
     db.refresh(db_project)
     return db_project
+
+
+async def _estimate_shading(db: Session, db_project):
+    """Shading from the buildings around the site, or None if Overpass is unreachable."""
+    buildings = await get_buildings(db, db_project.latitude, db_project.longitude)
+    if buildings is None:
+        return None
+    array_height = find_host_height(buildings, db_project.latitude, db_project.longitude)
+    return compute_shading(
+        buildings,
+        db_project.latitude,
+        db_project.longitude,
+        db_project.tilt_deg,
+        db_project.azimuth_deg,
+        array_height if array_height is not None else DEFAULT_ARRAY_HEIGHT_M,
+    )
 
 
 def delete_project(db: Session, project_id: int):

@@ -1,8 +1,60 @@
+// Every form field, by input id and how to read it. One list so collecting,
+// filling and resetting the form can't drift apart.
+const FORM_FIELDS = [
+    ['project_name', 'text'],
+    ['client_name', 'text'],
+    ['site_address', 'text'],
+    ['date', 'text'],
+    ['latitude', 'number'],
+    ['longitude', 'number'],
+
+    ['num_panels', 'int'],
+    ['panel_wattage', 'number'],
+    ['panel_model', 'text'],
+    ['inverter_model', 'text'],
+    ['roof_area_sqm', 'number'],
+    ['degradation_rate', 'number'],
+    ['tilt_deg', 'number'],
+    ['azimuth_deg', 'number'],
+    ['irradiance_calibration', 'number'],
+
+    ['temp_loss_pct', 'number'],
+    ['shading_loss_pct', 'number'],
+    ['shading_auto', 'bool'],
+    ['soiling_loss_pct', 'number'],
+    ['inverter_loss_pct', 'number'],
+    ['mismatch_loss_pct', 'number'],
+    ['dc_wiring_loss_pct', 'number'],
+    ['ac_wiring_loss_pct', 'number'],
+
+    ['system_cost_inr', 'number'],
+    ['subsidy_inr', 'number'],
+    ['tariff_inr_per_kwh', 'number'],
+    ['tariff_escalation_pct', 'number'],
+    ['export_ratio_pct', 'number'],
+    ['export_tariff_inr_per_kwh', 'number'],
+    ['om_cost_pct', 'number'],
+    ['discount_rate_pct', 'number'],
+    ['inverter_replacement_year', 'int'],
+    ['inverter_replacement_cost_inr', 'number'],
+];
+
 const app = {
     currentProjectId: null,
     currentProject: null,
+    editingId: null,
+    searchTimer: null,
 
     init() {
+        const form = document.getElementById('project-form');
+        // Native constraint validation can't focus a field inside a closed <details>,
+        // so open the section holding the first invalid input. Capture phase: the
+        // `invalid` event does not bubble.
+        form.addEventListener('invalid', event => {
+            const section = event.target.closest('details');
+            if (section) section.open = true;
+        }, true);
+
         this.loadDashboard();
     },
 
@@ -18,102 +70,183 @@ const app = {
         }
     },
 
+    // --- dashboard ---------------------------------------------------------
+
+    onSearchInput() {
+        // Debounced: one request per pause, not per keystroke.
+        clearTimeout(this.searchTimer);
+        this.searchTimer = setTimeout(() => this.loadDashboard(), 200);
+    },
+
     async loadDashboard() {
         const grid = document.getElementById('projects-grid');
+        const search = document.getElementById('project-search').value.trim();
         grid.innerHTML = '<div class="loading">Loading projects...</div>';
 
-        const projects = await api.getProjects();
+        const projects = await api.getProjects(search);
         grid.innerHTML = '';
 
         if (projects.length === 0) {
-            grid.innerHTML = '<p class="text-gray" style="grid-column: 1/-1">No proposals found. Create one!</p>';
+            grid.innerHTML = search
+                ? `<p class="text-gray" style="grid-column: 1/-1">No proposals match “${esc(search)}”.</p>`
+                : '<p class="text-gray" style="grid-column: 1/-1">No proposals found. Create one!</p>';
             return;
         }
 
-        projects.forEach(p => {
-            const card = document.createElement('div');
-            card.className = 'card project-card';
-            card.innerHTML = `
+        projects.forEach(p => grid.appendChild(this.projectCard(p)));
+    },
+
+    projectCard(p) {
+        const card = document.createElement('div');
+        card.className = 'card project-card';
+        const payback = p.payback_years != null ? `${p.payback_years} yr payback` : '';
+        card.innerHTML = `
+            <div class="card-top">
                 <h3>${esc(p.project_name)}</h3>
-                <p><strong>Client:</strong> ${esc(p.client_name)}</p>
-                <p><strong>System:</strong> ${p.capacity_kwp || '?'} kWp</p>
-                <p><strong>Date:</strong> ${new Date(p.created_at).toLocaleDateString()}</p>
-            `;
-            card.onclick = () => this.viewProjectReport(p);
-            grid.appendChild(card);
+                <span class="badge ${p.is_calculated ? 'badge-ok' : 'badge-pending'}">
+                    ${p.is_calculated ? 'Calculated' : 'Not calculated'}
+                </span>
+            </div>
+            <p><strong>Client:</strong> ${esc(p.client_name)}</p>
+            <p><strong>System:</strong> ${p.capacity_kwp ? `${p.capacity_kwp} kWp` : '—'} ${payback ? `· ${payback}` : ''}</p>
+            <p><strong>Created:</strong> ${new Date(p.created_at).toLocaleDateString('en-IN')}</p>
+            <div class="card-actions">
+                <button type="button" class="btn btn-small btn-primary" data-action="open">Open</button>
+                <button type="button" class="btn btn-small btn-secondary" data-action="edit">Edit</button>
+                <button type="button" class="btn btn-small btn-danger" data-action="delete">Delete</button>
+            </div>
+        `;
+
+        const actions = {
+            open: () => this.viewProjectReport(p),
+            edit: () => this.editProject(p),
+            delete: () => this.confirmDelete(p),
+        };
+        card.querySelectorAll('[data-action]').forEach(button => {
+            button.setAttribute('aria-label', `${button.textContent.trim()} ${p.project_name}`);
+            button.addEventListener('click', event => {
+                event.stopPropagation();
+                actions[button.dataset.action]();
+            });
         });
+        card.addEventListener('click', () => this.viewProjectReport(p));
+        return card;
+    },
+
+    async confirmDelete(project) {
+        if (!confirm(`Delete “${project.project_name}”? This cannot be undone.`)) return;
+        try {
+            await api.deleteProject(project.id);
+            if (this.currentProjectId === project.id) this.currentProjectId = null;
+            this.loadDashboard();
+        } catch (error) {
+            alert(error.message);
+        }
+    },
+
+    // --- form --------------------------------------------------------------
+
+    collectForm() {
+        const data = {};
+        FORM_FIELDS.forEach(([id, kind]) => {
+            const element = document.getElementById(id);
+            if (kind === 'bool') {
+                data[id] = element.checked;
+                return;
+            }
+            const raw = element.value;
+            if (kind === 'text') {
+                data[id] = raw.trim();
+            } else if (raw === '') {
+                // Blank number: null, not 0. Optional fields mean "auto"; required
+                // ones are caught by native validation, or by the API with a
+                // field-level message.
+                data[id] = null;
+            } else {
+                data[id] = kind === 'int' ? parseInt(raw, 10) : Number(raw);
+            }
+        });
+        return data;
+    },
+
+    fillForm(project) {
+        FORM_FIELDS.forEach(([id, kind]) => {
+            const element = document.getElementById(id);
+            const value = project[id];
+            if (kind === 'bool') element.checked = Boolean(value);
+            else element.value = value === null || value === undefined ? '' : value;
+        });
+    },
+
+    setFormMode(heading, submitLabel) {
+        document.getElementById('form-heading').textContent = heading;
+        document.getElementById('btnSubmitForm').textContent = submitLabel;
+        document.getElementById('formError').textContent = '';
+    },
+
+    newProject() {
+        this.editingId = null;
+        // Native reset restores the HTML value attributes, i.e. the engineering
+        // defaults, and clears everything else.
+        document.getElementById('project-form').reset();
+        this.setFormMode('Create Solar Proposal', 'Generate Report');
+        this.showView('form-view');
+    },
+
+    editProject(project) {
+        this.editingId = project.id;
+        this.fillForm(project);
+        this.setFormMode(`Edit: ${project.project_name}`, 'Save & Recalculate');
+        this.showView('form-view');
+    },
+
+    editCurrent() {
+        if (this.currentProject) this.editProject(this.currentProject);
     },
 
     async handleFormSubmit(e) {
         e.preventDefault();
         const btn = document.getElementById('btnSubmitForm');
         const errSpan = document.getElementById('formError');
+        const editing = this.editingId !== null;
+        const label = btn.textContent;
         btn.disabled = true;
-        btn.textContent = 'Generating...';
+        btn.textContent = editing ? 'Saving…' : 'Generating…';
         errSpan.textContent = '';
 
         try {
-            // Gather form data
-            const data = {
-                project_name: document.getElementById('project_name').value,
-                client_name: document.getElementById('client_name').value,
-                site_address: document.getElementById('site_address').value,
-                latitude: parseFloat(document.getElementById('latitude').value),
-                longitude: parseFloat(document.getElementById('longitude').value),
-                date: document.getElementById('date').value,
+            const data = this.collectForm();
+            const project = editing
+                ? await api.updateProject(this.editingId, data)
+                : await api.createProject(data);
 
-                num_panels: parseInt(document.getElementById('num_panels').value),
-                panel_wattage: parseFloat(document.getElementById('panel_wattage').value),
-                panel_model: document.getElementById('panel_model').value,
-                inverter_model: document.getElementById('inverter_model').value,
-                roof_area_sqm: parseFloat(document.getElementById('roof_area_sqm').value),
-                degradation_rate: parseFloat(document.getElementById('degradation_rate').value),
-                tilt_deg: parseFloat(document.getElementById('tilt_deg').value),
-                azimuth_deg: parseFloat(document.getElementById('azimuth_deg').value),
-                irradiance_calibration: parseFloat(document.getElementById('irradiance_calibration').value),
+            // Hold the id: if the calculation fails (bad coordinates, say), a retry
+            // updates this project instead of creating a duplicate.
+            this.editingId = project.id;
 
-                temp_loss_pct: parseFloat(document.getElementById('temp_loss_pct').value),
-                shading_loss_pct: parseFloat(document.getElementById('shading_loss_pct').value),
-                soiling_loss_pct: parseFloat(document.getElementById('soiling_loss_pct').value),
-                inverter_loss_pct: parseFloat(document.getElementById('inverter_loss_pct').value),
-                mismatch_loss_pct: parseFloat(document.getElementById('mismatch_loss_pct').value),
-                dc_wiring_loss_pct: parseFloat(document.getElementById('dc_wiring_loss_pct').value),
-                ac_wiring_loss_pct: parseFloat(document.getElementById('ac_wiring_loss_pct').value),
+            const calculated = await api.calculateProject(project.id);
 
-                system_cost_inr: parseFloat(document.getElementById('system_cost_inr').value),
-                // Blank means "auto-calculate", which the API reads as null.
-                subsidy_inr: document.getElementById('subsidy_inr').value === ''
-                    ? null
-                    : parseFloat(document.getElementById('subsidy_inr').value),
-                tariff_inr_per_kwh: parseFloat(document.getElementById('tariff_inr_per_kwh').value),
-                tariff_escalation_pct: parseFloat(document.getElementById('tariff_escalation_pct').value),
-                export_ratio_pct: parseFloat(document.getElementById('export_ratio_pct').value),
-                export_tariff_inr_per_kwh: parseFloat(document.getElementById('export_tariff_inr_per_kwh').value),
-                om_cost_pct: parseFloat(document.getElementById('om_cost_pct').value),
-                discount_rate_pct: parseFloat(document.getElementById('discount_rate_pct').value),
-            };
-
-            // 1. Create project
-            const project = await api.createProject(data);
-
-            // 2. Run calculations
-            const calculatedProject = await api.calculateProject(project.id);
-
-            // 3. Show report
-            this.renderReport(calculatedProject);
+            this.editingId = null;
+            this.renderReport(calculated);
             this.showView('report-view');
-
         } catch (error) {
             errSpan.textContent = error.message;
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Generate Report';
+            btn.textContent = label;
         }
     },
 
+    // --- report ------------------------------------------------------------
+
     async viewProjectReport(project) {
         if (!project.is_calculated) {
-            project = await api.calculateProject(project.id);
+            try {
+                project = await api.calculateProject(project.id);
+            } catch (error) {
+                alert(error.message);
+                return;
+            }
         }
         this.renderReport(project);
         this.showView('report-view');
@@ -183,6 +316,8 @@ const app = {
             </div>
         `;
 
+        this.renderShadingNote(p);
+
         // Projection
         document.getElementById('r_lifetime').textContent = `${p.lifetime_gen_mwh.toFixed(1)} MWh`;
         document.getElementById('r_year25').textContent = `${p.year25_output_mwh.toFixed(1)} MWh`;
@@ -191,6 +326,19 @@ const app = {
         document.getElementById('r_degradation_pct').textContent = `(${year25Ratio}% of Year 1)`;
 
         this.renderFinancials(p);
+    },
+
+    renderShadingNote(p) {
+        const note = document.getElementById('r_shading_note');
+        note.hidden = p.shading_computed_pct == null;
+        if (note.hidden) return;
+
+        const assumed = p.shading_heights_assumed;
+        const caveat = assumed
+            ? ` Heights were missing from OpenStreetMap for ${assumed} of them and assumed at 6 m, so treat this as an estimate.`
+            : '';
+        note.textContent =
+            `Shading of ${p.shading_computed_pct}% estimated from ${p.shading_neighbour_count} nearby building(s).${caveat}`;
     },
 
     renderFinancials(p) {
@@ -208,6 +356,13 @@ const app = {
         set('r_irr', p.irr_pct == null ? 'IRR not applicable' : `${p.irr_pct}% IRR`);
         set('r_co2', `${p.co2_offset_tonnes} t`);
         set('r_lcoe', `₹${p.lcoe_inr_per_kwh.toFixed(2)}/kWh over system life`);
+
+        const replacement = document.getElementById('r_replacement_note');
+        replacement.hidden = p.inverter_replacement_applied_inr == null;
+        if (!replacement.hidden) {
+            replacement.textContent =
+                `Includes a ${formatInr(p.inverter_replacement_applied_inr)} inverter replacement in year ${p.inverter_replacement_year}.`;
+        }
 
         chartManager.renderCashflowChart('cashflowChart', p.cashflow_json, p.net_investment_inr);
     },
