@@ -8,9 +8,9 @@ downloadable PDF proposal. Used by a solar business: the PDFs go to paying custo
 Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. Part One (Phases 0–4)
 is done: unblock, PVGIS irradiance, financials, UX, geometry-derived shading. Part Two
 is under way — **Phases 5 (multi-tenancy), 6 (component catalog + ALMM/DCR compliance)
-and 7 (P90, site temperature loss, shaded monthly split) are done**; next is Phase 8
-(consumption, tariff slabs, sizing). The app is becoming a multi-tenant SaaS sold to
-other EPCs.
+7 (P90, site temperature loss, shaded monthly split) and 8 (consumption, slab tariffs,
+sizing) are done**; next is Phase 9 (roof geometry and panel layout — start with the
+Bhuvan imagery spike). The app is becoming a multi-tenant SaaS sold to other EPCs.
 
 ## Commands
 
@@ -47,6 +47,9 @@ Windows: `start.bat` / `stop.bat` (port 8000, needs `.venv`).
 | `app/calculations/solar.py` | **Pure functions, no DB/IO.** The only place physics lives |
 | `app/calculations/financial.py` | **Pure functions, no DB/IO.** Subsidy, cashflow, payback, IRR, NPV, LCOE, CO₂ |
 | `app/calculations/compliance.py` | **Pure.** ALMM List-I and DCR rules; decides whether a subsidy may be claimed |
+| `app/calculations/tariff.py` | **Pure.** Telescopic slab billing and net-metering settlement with banking |
+| `app/calculations/sizing.py` | **Pure.** Capacity ceilings from consumption, roof and budget |
+| `app/models/tariff_plan.py` | `tariff_plans` — DISCOM rate cards, same shared/own pattern as the catalog |
 | `app/models/components.py` | `panel_models`, `inverter_models`; `org_id` NULL = shared seed row |
 | `app/services/catalog.py` | Component visibility in one place: shared rows plus the firm's own |
 | `app/api/routes/catalog.py` | `/api/catalog/panels`, `/inverters` — list, create, update |
@@ -170,6 +173,48 @@ invented price in a customer proposal is worse than a missing section.
   20.0% and ₹3.73.) The plan's sanity band is 4–6 years; outside it means a
   sign error. IRR was cross-checked against Newton's method and a brute-force scan.
 - Money is `float`, rounded to whole rupees. These are projections, not a ledger.
+- Consumption is held flat across the 25 years: no load growth is modelled. Fixed
+  DISCOM charges are excluded from savings because they do not change when solar is
+  added, so they cancel out of the difference.
+
+## Consumption, tariffs and sizing
+
+Savings come from the customer's own bill when both a 12-month `consumption_json` and a
+`tariff_plan_id` are present. Missing either falls back to the older estimate — a flat
+tariff with a guessed `export_ratio_pct` — and `savings_basis` records which was used so
+the report and PDF can say so. Projects created before this phase are untouched.
+
+Two things make Indian billing different from a flat rate, and both change what solar
+is worth:
+
+- **Telescopic slabs.** Each band is charged at its own rate, so solar removes units
+  from the *top* of the bill. Savings are `bill(consumption) − bill(imports)`, never
+  `units × average tariff`.
+- **Banking.** A surplus month is not paid out; the units bank as credit and offset a
+  later month. Only the balance left at the end of the settlement year is bought out at
+  the export rate. `settle_net_metering` conserves generation: self-consumed plus banked
+  surplus equals what was generated.
+
+This matters more than any other number in the app. Same 9.5 kWp system, same
+generation, on a slab tariff of ₹3 / ₹6.50 / ₹9.50:
+
+| Customer | Effective value | Payback |
+|---|---|---|
+| Flat estimate (the old guess) | ₹6.50/kWh | 5.2 yr |
+| 2,000 units a month | ₹9.50/kWh | 3.6 yr |
+| 900 units a month | ₹7.14/kWh | 4.7 yr |
+| 250 units a month | ₹3.47/kWh | **10.6 yr** |
+
+The flat estimate told that last customer 5.2 years. **No tariff rates ship with the
+app** — they vary by DISCOM, category and revision, and a stale rate in a proposal is a
+commercial problem. Operators create their own plans, and `tariff_check_json` compares
+the modelled annual bill against the one on the customer's bills so a wrong plan shows
+up rather than quietly skewing every saving.
+
+`recommend_capacity` answers the question customers ask first. Three ceilings —
+consumption, roof, budget — and the smallest wins, with `limited_by` naming it.
+**The roof ceiling is approximate**: `PACKING_FACTOR` in `sizing.py` is a stand-in for
+row spacing and setbacks until Phase 9 lays the array out for real.
 
 ## Shading model (app/calculations/shading.py)
 

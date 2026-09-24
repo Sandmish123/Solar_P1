@@ -1,6 +1,9 @@
+import json
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.calculations.tariff import validate_slabs
 
 
 class PanelModelBase(BaseModel):
@@ -75,6 +78,43 @@ class InverterModelUpdate(InverterModelBase):
 
 
 class InverterModelResponse(InverterModelBase):
+    id: int
+    org_id: Optional[int] = None
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TariffPlanBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    discom: Optional[str] = Field(None, max_length=120)
+    category: Optional[str] = Field(None, max_length=60)
+    # Telescopic bands as JSON, e.g. [{"upto": 50, "rate": 2.0}, {"upto": null, "rate": 8.0}]
+    slabs_json: str = Field(min_length=2)
+    fixed_charge_inr_per_kw_month: Optional[float] = Field(None, ge=0, le=10000)
+
+    @field_validator("slabs_json")
+    @classmethod
+    def _slabs_are_usable(cls, value: str) -> str:
+        """Rejected at the boundary: a malformed tariff would silently misprice every
+        saving built on it."""
+        try:
+            slabs = json.loads(value)
+        except (TypeError, ValueError):
+            raise ValueError("slabs must be valid JSON")
+        validate_slabs(slabs)   # raises ValueError with the specific problem
+        return value
+
+
+class TariffPlanCreate(TariffPlanBase):
+    pass
+
+
+class TariffPlanUpdate(TariffPlanBase):
+    """Full replace, like the other catalog entries."""
+
+
+class TariffPlanResponse(TariffPlanBase):
     id: int
     org_id: Optional[int] = None
     is_active: bool

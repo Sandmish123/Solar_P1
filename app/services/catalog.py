@@ -8,8 +8,15 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.components import InverterModel, PanelModel
+from app.models.tariff_plan import TariffPlan
 
-MODELS = {"panel": PanelModel, "inverter": InverterModel}
+MODELS = {"panel": PanelModel, "inverter": InverterModel, "tariff": TariffPlan}
+# Tariff plans have a name rather than a manufacturer and model.
+ORDERING = {
+    "panel": (PanelModel.manufacturer, PanelModel.model),
+    "inverter": (InverterModel.manufacturer, InverterModel.model),
+    "tariff": (TariffPlan.name,),
+}
 
 
 def _visible(db: Session, model_class, org_id: int):
@@ -20,10 +27,7 @@ def _visible(db: Session, model_class, org_id: int):
 
 
 def list_components(db: Session, kind: str, org_id: int):
-    model_class = MODELS[kind]
-    return _visible(db, model_class, org_id).order_by(
-        model_class.manufacturer, model_class.model
-    ).all()
+    return _visible(db, MODELS[kind], org_id).order_by(*ORDERING[kind]).all()
 
 
 def get_component(db: Session, kind: str, component_id: int, org_id: int):

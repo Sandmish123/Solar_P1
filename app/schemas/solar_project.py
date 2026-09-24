@@ -1,6 +1,7 @@
+import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, List
 from datetime import datetime
 
@@ -46,6 +47,33 @@ class ProjectBase(BaseModel):
     tariff_escalation_pct: float = Field(3.0, ge=0, le=20)
     export_ratio_pct: float = Field(30.0, ge=0, le=100, description="Annual surplus paid at the export tariff, % of generation")
     export_tariff_inr_per_kwh: float = Field(3.0, ge=0, le=50)
+    consumption_json: Optional[str] = Field(None, description="12 months of {units, bill_inr}")
+
+    @field_validator("consumption_json")
+    @classmethod
+    def _twelve_valid_months(cls, value):
+        """Validated at the boundary rather than trusted: a short or negative series
+        would silently skew the whole savings model."""
+        if value in (None, ""):
+            return None
+        try:
+            months = json.loads(value)
+        except (TypeError, ValueError):
+            raise ValueError("consumption must be valid JSON")
+        if not isinstance(months, list) or len(months) != 12:
+            raise ValueError("consumption needs exactly 12 months")
+        for index, month in enumerate(months):
+            if not isinstance(month, dict):
+                raise ValueError(f"month {index + 1} is not an object")
+            units = month.get("units")
+            if units is None or not isinstance(units, (int, float)) or units < 0:
+                raise ValueError(f"month {index + 1} needs units of 0 or more")
+            bill = month.get("bill_inr")
+            if bill is not None and (not isinstance(bill, (int, float)) or bill < 0):
+                raise ValueError(f"month {index + 1} has a negative bill")
+        return value
+    tariff_plan_id: Optional[int] = None
+    budget_inr: Optional[float] = Field(None, gt=0, le=1e9)
     om_cost_pct: float = Field(1.0, ge=0, le=10, description="Annual O&M, % of system cost")
     discount_rate_pct: float = Field(8.0, ge=0, le=30)
     inverter_replacement_year: int = Field(12, ge=0, le=25, description="Year the inverter is replaced; 0 disables")
@@ -95,6 +123,13 @@ class ProjectResponse(ProjectBase):
     compliance_json: Optional[str] = None
     annual_gen_p90_kwh: Optional[float] = None
     temp_loss_computed_pct: Optional[float] = None
+    savings_basis: Optional[str] = None
+    self_consumed_kwh: Optional[float] = None
+    exported_kwh: Optional[float] = None
+    effective_rate_inr_per_kwh: Optional[float] = None
+    recommended_kwp: Optional[float] = None
+    sizing_json: Optional[str] = None
+    tariff_check_json: Optional[str] = None
 
     is_calculated: bool
     created_at: datetime

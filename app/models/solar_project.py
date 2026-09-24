@@ -60,6 +60,10 @@ class SolarProject(Base):
     tariff_escalation_pct = Column(Float, default=3.0, server_default=text("3.0"))
     export_ratio_pct = Column(Float, default=30.0, server_default=text("30.0"))
     export_tariff_inr_per_kwh = Column(Float, default=3.0, server_default=text("3.0"))
+    # 12 months of the customer's own bill: [{"units": x, "bill_inr": y}, ...]
+    consumption_json = Column(Text, nullable=True)
+    tariff_plan_id = Column(Integer, ForeignKey("tariff_plans.id"), nullable=True)
+    budget_inr = Column(Float, nullable=True)
     om_cost_pct = Column(Float, default=1.0, server_default=text("1.0"))
     discount_rate_pct = Column(Float, default=8.0, server_default=text("8.0"))
     # 0 disables; cost defaults to a share of system cost when not given.
@@ -103,6 +107,16 @@ class SolarProject(Base):
 
     annual_gen_p90_kwh = Column(Float, nullable=True)     # weather variability only
     temp_loss_computed_pct = Column(Float, nullable=True)  # PVGIS l_tg for this site
+
+    # "consumption" when settled against the customer's own bill, "flat" when the
+    # older export-ratio estimate was used. The report says which.
+    savings_basis = Column(String, nullable=True)
+    self_consumed_kwh = Column(Float, nullable=True)
+    exported_kwh = Column(Float, nullable=True)
+    effective_rate_inr_per_kwh = Column(Float, nullable=True)
+    recommended_kwp = Column(Float, nullable=True)
+    sizing_json = Column(Text, nullable=True)
+    tariff_check_json = Column(Text, nullable=True)
 
     # Metadata
     is_calculated = Column(Boolean, default=False)

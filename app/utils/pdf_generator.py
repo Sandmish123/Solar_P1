@@ -146,6 +146,11 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
         ['Cost per kWh over system life', f"Rs. {project.lcoe_inr_per_kwh:.2f}"],
         ['CO2 Avoided over 25 Years', f"{project.co2_offset_tonnes:g} tonnes"],
     ]
+    if project.savings_basis == "consumption":
+        metrics.insert(3, [
+            'Self-consumed / Exported (year 1)',
+            f"{project.self_consumed_kwh:,.0f} / {project.exported_kwh:,.0f} kWh",
+        ])
     if project.inverter_replacement_applied_inr:
         metrics.insert(4, [
             f'Inverter Replacement (year {project.inverter_replacement_year})',
@@ -166,11 +171,13 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
     # buried between milestones.
     shown = {1, 5, 10, 15, 20, 25} | ({project.inverter_replacement_year} if project.inverter_replacement_applied_inr else set())
     milestones = [row for row in rows if row["year"] in shown]
-    cashflow = [['Year', 'Generation', 'Grid Tariff', 'Savings', 'Cumulative']] + [
+    # The value of a generated unit, not the retail tariff: under a slab tariff with
+    # banking there is no single "grid tariff" that explains the saving.
+    cashflow = [['Year', 'Generation', 'Value/kWh', 'Savings', 'Cumulative']] + [
         [
             str(row["year"]),
             f"{row['generation_kwh']:,.0f} kWh",
-            f"Rs. {row['grid_tariff_inr']:.2f}",
+            f"Rs. {row.get('effective_rate_inr', row['grid_tariff_inr']):.2f}",
             format_inr(row["savings_inr"]),
             format_inr(row["cumulative_inr"]),
         ]
@@ -195,9 +202,22 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
     else:
         replacement_note = "no inverter replacement"
 
+    if project.savings_basis == "consumption":
+        basis_note = (
+            f"savings settled month by month against the customer's own 12-month "
+            f"consumption on a slab tariff, with surplus banked and the year-end balance "
+            f"paid at Rs. {project.export_tariff_inr_per_kwh:g}/kWh "
+            f"(worth Rs. {project.effective_rate_inr_per_kwh:g}/kWh across all generation); "
+        )
+    else:
+        basis_note = (
+            f"grid tariff Rs. {project.tariff_inr_per_kwh:g}/kWh rising "
+            f"{project.tariff_escalation_pct:g}% a year, with {project.export_ratio_pct:g}% of "
+            f"generation assumed exported at Rs. {project.export_tariff_inr_per_kwh:g}/kWh; "
+        )
+
     assumptions = (
-        f"Assumptions: grid tariff Rs. {project.tariff_inr_per_kwh:g}/kWh rising {project.tariff_escalation_pct:g}% a year; "
-        f"{project.export_ratio_pct:g}% of generation exported as annual surplus at Rs. {project.export_tariff_inr_per_kwh:g}/kWh; "
+        f"Assumptions: {basis_note}"
         f"O&M {project.om_cost_pct:g}% of system cost a year; {replacement_note}; "
         f"{project.degradation_rate:g}% annual panel degradation; "
         f"{project.discount_rate_pct:g}% discount rate. CO2 at the CEA grid emission factor, "

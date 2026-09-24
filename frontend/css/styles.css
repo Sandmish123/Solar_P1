@@ -1053,3 +1053,48 @@ body.signed-out .user-chip {
     background: #f1f5f9;
     color: var(--text-secondary);
 }
+
+/* ---------- Consumption grid and sizing ---------- */
+
+.consumption-intro {
+    font-size: 0.8125rem;
+    margin: 0.75rem 0;
+}
+
+.consumption-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.5rem 1rem;
+}
+
+.consumption-row {
+    display: grid;
+    grid-template-columns: 2.5rem 1fr 1fr;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.consumption-month {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.consumption-row input {
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 0.85rem;
+    background: rgba(250, 255, 255, 0.85);
+    color: var(--text-primary);
+}
+
+.sizing-note {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+    background: rgba(37, 99, 235, 0.06);
+    border: 1px solid rgba(37, 99, 235, 0.25);
+    font-size: 0.8125rem;
+}

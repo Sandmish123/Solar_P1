@@ -7,6 +7,8 @@ from app.schemas.solar_project import ProjectCreate, ProjectUpdate
 from app.calculations.compliance import blocks_subsidy, check_compliance, to_dicts
 from app.calculations.financial import perform_financial_calculations
 from app.calculations.shading import DEFAULT_ARRAY_HEIGHT_M, compute_shading, find_host_height
+from app.calculations.sizing import area_per_kwp_sqm, recommend_capacity
+from app.calculations.tariff import slab_bill
 from app.calculations.solar import perform_all_calculations
 from app.services import catalog
 from app.services.buildings import get_buildings
@@ -95,11 +97,20 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
         "inverter_replacement_cost_inr": db_project.inverter_replacement_cost_inr,
     }
 
+    consumption_units, entered_annual_bill = _parse_consumption(db_project.consumption_json)
+    tariff_plan = _component(db, "tariff", db_project.tariff_plan_id, org_id)
+    slabs = json.loads(tariff_plan.slabs_json) if tariff_plan else None
+    # Both are needed: a tariff without consumption cannot be settled, and consumption
+    # without a tariff cannot be priced. Either missing falls back to the flat estimate.
+    financial_inputs["monthly_consumption"] = consumption_units
+    financial_inputs["tariff_slabs"] = slabs
+
     # Components and compliance first: both are plain DB reads, and resolving them
     # before the awaits below means nothing here depends on ORM objects that a cache
     # write inside get_irradiance could expire.
     panel = _component(db, "panel", db_project.panel_model_id, org_id)
     inverter = _component(db, "inverter", db_project.inverter_model_id, org_id)
+    panel_dimensions = (panel.length_mm, panel.width_mm, panel.wp) if panel else (None, None, None)
     if panel is not None:
         # The catalog is the source of truth once a model is chosen.
         data["panel_wattage"] = panel.wp
@@ -143,8 +154,24 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
     })
     # Always written, so removing the system cost clears stale financials.
     results.update(perform_financial_calculations(
-        financial_inputs, results["capacity_kwp"], results["annual_gen_kwh"], data["degradation_rate"]
+        financial_inputs, results["capacity_kwp"], results["annual_gen_kwh"],
+        data["degradation_rate"], _monthly_share(results["monthly_gen_json"]),
     ))
+
+    sizing = recommend_capacity(
+        specific_yield_kwh_per_kwp=results["specific_yield"],
+        annual_consumption_kwh=sum(consumption_units) if consumption_units else None,
+        roof_area_sqm=db_project.roof_area_sqm,
+        area_per_kwp=area_per_kwp_sqm(*panel_dimensions, mounting=db_project.mounting_type),
+        budget_inr=db_project.budget_inr,
+        cost_per_kwp_inr=(
+            financial_inputs["system_cost_inr"] / results["capacity_kwp"]
+            if financial_inputs["system_cost_inr"] and results["capacity_kwp"] else None
+        ),
+    )
+    results["recommended_kwp"] = sizing["recommended_kwp"]
+    results["sizing_json"] = json.dumps(sizing) if sizing["recommended_kwp"] else None
+    results["tariff_check_json"] = _check_tariff(consumption_units, slabs, entered_annual_bill)
 
     # Update project with results
     for key, value in results.items():
@@ -153,6 +180,40 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
     db.commit()
     db.refresh(db_project)
     return db_project
+
+
+def _parse_consumption(consumption_json):
+    """(monthly units, entered annual bill) or (None, None). The schema has already
+    validated the shape, so this only reads it."""
+    if not consumption_json:
+        return None, None
+    months = json.loads(consumption_json)
+    units = [float(month["units"]) for month in months]
+    bills = [month.get("bill_inr") for month in months]
+    entered_bill = sum(bills) if all(bill is not None for bill in bills) else None
+    # All-zero consumption tells us nothing, so treat it as not supplied.
+    return (units, entered_bill) if sum(units) > 0 else (None, None)
+
+
+def _monthly_share(monthly_gen_json):
+    """The year's generation as 12 fractions, for settling month by month."""
+    months = json.loads(monthly_gen_json)
+    total = sum(month["value_kwh"] for month in months)
+    return [month["value_kwh"] / total for month in months] if total > 0 else None
+
+
+def _check_tariff(consumption_units, slabs, entered_annual_bill):
+    """Compare the modelled bill with the one the customer actually pays. A large gap
+    usually means the wrong tariff plan, which would quietly skew every saving."""
+    if not (consumption_units and slabs and entered_annual_bill):
+        return None
+    modelled = sum(slab_bill(units, slabs) for units in consumption_units)
+    deviation = (modelled - entered_annual_bill) / entered_annual_bill * 100
+    return json.dumps({
+        "entered_annual_bill_inr": round(entered_annual_bill),
+        "modelled_annual_bill_inr": round(modelled),
+        "deviation_pct": round(deviation, 1),
+    })
 
 
 def _component(db: Session, kind: str, component_id, org_id: int):

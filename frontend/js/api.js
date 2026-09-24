@@ -89,6 +89,10 @@ const api = {
         return request(`${this.baseUrl}/catalog/inverters`, {}, 'Could not load the inverter catalog');
     },
 
+    getTariffPlans() {
+        return request(`${this.baseUrl}/catalog/tariffs`, {}, 'Could not load tariff plans');
+    },
+
     getBuildingFootprint(latitude, longitude) {
         const params = new URLSearchParams({ latitude, longitude });
         return request(`${this.baseUrl}/geospatial/building?${params}`, {}, 'OpenStreetMap building data unavailable');

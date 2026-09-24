@@ -37,15 +37,21 @@ const FORM_FIELDS = [
     ['tariff_escalation_pct', 'number'],
     ['export_ratio_pct', 'number'],
     ['export_tariff_inr_per_kwh', 'number'],
+    ['consumption_json', 'text'],
+    ['tariff_plan_id', 'number'],
+    ['budget_inr', 'number'],
     ['om_cost_pct', 'number'],
     ['discount_rate_pct', 'number'],
     ['inverter_replacement_year', 'int'],
     ['inverter_replacement_cost_inr', 'number'],
 ];
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 const app = {
     user: null,
-    catalog: { panels: [], inverters: [] },
+    catalog: { panels: [], inverters: [], tariffs: [] },
     currentProjectId: null,
     currentProject: null,
     editingId: null,
@@ -86,11 +92,16 @@ const app = {
 
     async loadCatalog() {
         try {
-            const [panels, inverters] = await Promise.all([api.getPanels(), api.getInverters()]);
-            this.catalog = { panels, inverters };
+            const [panels, inverters, tariffs] = await Promise.all([
+                api.getPanels(), api.getInverters(), api.getTariffPlans(),
+            ]);
+            this.catalog = { panels, inverters, tariffs };
         } catch (error) {
-            this.catalog = { panels: [], inverters: [] };   // typing the names still works
+            this.catalog = { panels: [], inverters: [], tariffs: [] };  // typing the names still works
         }
+        this.fillCatalogSelect('tariff_plan_id', this.catalog.tariffs,
+            t => `${t.name}${t.discom ? ` (${t.discom})` : ''}`);
+        this.renderConsumptionGrid();
         this.fillCatalogSelect('panel_model_id', this.catalog.panels,
             p => `${p.manufacturer} ${p.model} — ${p.wp} W`);
         this.fillCatalogSelect('inverter_model_id', this.catalog.inverters,
@@ -108,6 +119,51 @@ const app = {
             select.appendChild(option);
         });
         select.value = chosen;
+    },
+
+    // Twelve months of the customer's bill. Built here rather than in the HTML so the
+    // markup stays small; a hidden consumption_json field carries it to the API.
+    renderConsumptionGrid() {
+        const grid = document.getElementById('consumption-grid');
+        if (grid.children.length) return;          // built once per page load
+        grid.innerHTML = MONTH_NAMES.map((month, index) => `
+            <div class="consumption-row">
+                <span class="consumption-month">${month}</span>
+                <input type="number" min="0" step="1" id="cons_units_${index}"
+                    placeholder="units" oninput="app.syncConsumption()" aria-label="${month} units">
+                <input type="number" min="0" step="1" id="cons_bill_${index}"
+                    placeholder="₹ bill" oninput="app.syncConsumption()" aria-label="${month} bill">
+            </div>`).join('');
+    },
+
+    syncConsumption() {
+        const months = MONTH_NAMES.map((_, index) => ({
+            units: document.getElementById(`cons_units_${index}`).value,
+            bill: document.getElementById(`cons_bill_${index}`).value,
+        }));
+        // All blank means "not supplied", which the API reads as the flat estimate.
+        const anyEntered = months.some(m => m.units !== '');
+        document.getElementById('consumption_json').value = anyEntered
+            ? JSON.stringify(months.map(m => ({
+                units: Number(m.units || 0),
+                bill_inr: m.bill === '' ? null : Number(m.bill),
+            })))
+            : '';
+    },
+
+    loadConsumptionGrid(consumptionJson) {
+        this.renderConsumptionGrid();
+        let months = [];
+        try {
+            months = consumptionJson ? JSON.parse(consumptionJson) : [];
+        } catch (error) {
+            months = [];
+        }
+        MONTH_NAMES.forEach((_, index) => {
+            const month = months[index] || {};
+            document.getElementById(`cons_units_${index}`).value = month.units ?? '';
+            document.getElementById(`cons_bill_${index}`).value = month.bill_inr ?? '';
+        });
     },
 
     onPanelChange() {
@@ -300,6 +356,7 @@ const app = {
         // defaults, and clears everything else.
         document.getElementById('project-form').reset();
         this.setFormMode('Create Solar Proposal', 'Generate Report');
+        this.loadConsumptionGrid(null);
         this.onPanelChange();
         this.onInverterChange();
         this.showView('form-view');
@@ -308,6 +365,7 @@ const app = {
     editProject(project) {
         this.editingId = project.id;
         this.fillForm(project);
+        this.loadConsumptionGrid(project.consumption_json);
         this.onPanelChange();
         this.onInverterChange();
         this.setFormMode(`Edit: ${project.project_name}`, 'Save & Recalculate');
@@ -440,6 +498,8 @@ const app = {
         `;
 
         this.renderCompliance(p);
+        this.renderTariffCheck(p);
+        this.renderSizing(p);
         this.renderShadingNote(p);
 
         // Projection
@@ -450,6 +510,37 @@ const app = {
         document.getElementById('r_degradation_pct').textContent = `(${year25Ratio}% of Year 1)`;
 
         this.renderFinancials(p);
+    },
+
+    renderSizing(p) {
+        const note = document.getElementById('r_sizing');
+        const sizing = p.sizing_json ? JSON.parse(p.sizing_json) : null;
+        note.hidden = !sizing || !sizing.recommended_kwp;
+        if (note.hidden) return;
+
+        const reason = {
+            consumption: "the customer's own consumption",
+            roof: 'the available roof area (approximate until the array is laid out)',
+            budget: 'the stated budget',
+        }[sizing.limited_by] || sizing.limited_by;
+        const ceilings = Object.entries(sizing.ceilings_kwp)
+            .map(([name, kwp]) => `${name} ${kwp} kWp`).join(' · ');
+        note.textContent =
+            `Suggested size ${sizing.recommended_kwp} kWp, limited by ${reason}. `
+            + `This design is ${p.capacity_kwp} kWp. Ceilings: ${ceilings}.`;
+    },
+
+    renderTariffCheck(p) {
+        const note = document.getElementById('r_tariff_check');
+        const check = p.tariff_check_json ? JSON.parse(p.tariff_check_json) : null;
+        // Only worth raising when the modelled bill and the real one disagree enough
+        // to suggest the wrong tariff plan.
+        note.hidden = !check || Math.abs(check.deviation_pct) <= 15;
+        if (note.hidden) return;
+        note.textContent =
+            `The selected tariff models ${formatInr(check.modelled_annual_bill_inr)} a year `
+            + `against the ${formatInr(check.entered_annual_bill_inr)} on the bills `
+            + `(${check.deviation_pct > 0 ? '+' : ''}${check.deviation_pct}%). Check the tariff plan.`;
     },
 
     renderCompliance(p) {
@@ -489,7 +580,10 @@ const app = {
         set('r_net_investment', formatInr(p.net_investment_inr));
         set('r_subsidy', `${formatInr(p.system_cost_inr)} less ${formatInr(p.subsidy_applied_inr)} subsidy`);
         set('r_payback', p.payback_years == null ? 'Beyond 25 yrs' : `${p.payback_years} yrs`);
-        set('r_year1_savings', `${formatInr(p.year1_savings_inr)} saved in year 1`);
+        const basis = p.savings_basis === 'consumption'
+            ? `from the customer's own bills, ₹${p.effective_rate_inr_per_kwh}/kWh effective`
+            : `estimated at ${p.export_ratio_pct}% export`;
+        set('r_year1_savings', `${formatInr(p.year1_savings_inr)} in year 1 · ${basis}`);
         set('r_lifetime_savings', formatInr(p.lifetime_net_savings_inr));
         set('r_irr', p.irr_pct == null ? 'IRR not applicable' : `${p.irr_pct}% IRR`);
         set('r_co2', `${p.co2_offset_tonnes} t`);

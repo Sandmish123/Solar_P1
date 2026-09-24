@@ -220,6 +220,29 @@
                         </details>
                     </div>
 
+                    <!-- Consumption & tariff Card -->
+                    <div class="card form-card full-width">
+                        <details class="advanced">
+                            <summary>5. Consumption &amp; tariff<span class="advanced-hint">optional, but it replaces the guessed export split</span></summary>
+                            <div class="field-grid">
+                                <div class="input-group">
+                                    <label for="tariff_plan_id">Tariff plan</label>
+                                    <select id="tariff_plan_id" aria-describedby="tariff_plan_hint">
+                                        <option value="">None — use the flat rate above</option>
+                                    </select>
+                                    <small id="tariff_plan_hint" class="text-gray">Slab tariffs price each unit at the band it falls in.</small>
+                                </div>
+                                <div class="input-group">
+                                    <label for="budget_inr">Customer budget (₹)</label>
+                                    <input type="number" step="1" id="budget_inr" min="1" placeholder="Optional">
+                                </div>
+                            </div>
+                            <p class="text-gray consumption-intro">Twelve months from the customer's bills. With a tariff plan, savings are settled month by month with banking instead of estimated.</p>
+                            <div id="consumption-grid" class="consumption-grid"></div>
+                            <input type="hidden" id="consumption_json">
+                        </details>
+                    </div>
+
                     <!-- Financials Card -->
                     <div class="card form-card full-width">
                         <h3>4. Financials (₹)</h3>
@@ -374,6 +397,8 @@
                     <!-- LOSSES BREAKDOWN -->
                     <div class="section-title mt-xl">LOSSES BREAKDOWN</div>
                     <div class="compliance-panel" id="r_compliance" hidden></div>
+                    <div class="shading-note" id="r_tariff_check" hidden></div>
+                    <div class="sizing-note" id="r_sizing" hidden></div>
                     <div class="shading-note" id="r_shading_note" hidden></div>
                     <div class="losses-container" id="r_losses">
                         <!-- Populated via JS -->
@@ -521,10 +546,10 @@
 
     <!-- Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/js/api.js?v=13"></script>
-    <script src="/js/charts.js?v=13"></script>
+    <script src="/js/api.js?v=14"></script>
+    <script src="/js/charts.js?v=14"></script>
     <script src="/js/3d-model.js?v=6"></script>
-    <script src="/js/app.js?v=13"></script>
+    <script src="/js/app.js?v=14"></script>
 </body>
 
 </html>

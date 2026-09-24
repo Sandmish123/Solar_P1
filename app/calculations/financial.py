@@ -7,6 +7,7 @@ a ledger; move to Decimal if this ever books real money.
 import json
 
 from app.calculations.solar import generation_by_year
+from app.calculations.tariff import settle_net_metering, slab_bill
 
 # PM Surya Ghar: Muft Bijli Yojana central financial assistance, residential rooftop,
 # as marginal bands of (band upper bound in kW, INR per kW within the band). Nothing is
@@ -41,6 +42,10 @@ FINANCIAL_RESULT_FIELDS = (
     "lcoe_inr_per_kwh",
     "co2_offset_tonnes",
     "inverter_replacement_applied_inr",
+    "savings_basis",
+    "self_consumed_kwh",
+    "exported_kwh",
+    "effective_rate_inr_per_kwh",
     "cashflow_json",
 )
 
@@ -56,6 +61,26 @@ def calculate_pm_surya_ghar_subsidy(capacity_kw: float) -> float:
     return subsidy
 
 
+def _savings_from_consumption(generated, monthly_share, monthly_consumption, slabs,
+                              escalation, export_tariff_inr_per_kwh):
+    """What the customer's bill actually falls by, under telescopic slabs and banking.
+
+    The saving is the difference between the bill they would have paid and the bill
+    they will pay, not `units x tariff`: solar removes units from the top of the bill,
+    where they cost most.
+    """
+    monthly_generation = [generated * share for share in monthly_share]
+    settlement = settle_net_metering(monthly_generation, monthly_consumption)
+
+    bill_without_solar = sum(slab_bill(units, slabs, escalation) for units in monthly_consumption)
+    bill_with_solar = sum(slab_bill(units, slabs, escalation) for units in settlement["monthly_imports"])
+    savings = (
+        bill_without_solar - bill_with_solar
+        + settlement["banked_surplus_kwh"] * export_tariff_inr_per_kwh
+    )
+    return savings, settlement["self_consumed_kwh"], settlement["banked_surplus_kwh"]
+
+
 def build_cashflow(
     generation_kwh: list,
     tariff_inr_per_kwh: float,
@@ -65,24 +90,52 @@ def build_cashflow(
     om_cost_inr: float,
     replacement_year: int = 0,
     replacement_cost_inr: float = 0.0,
+    monthly_share: list = None,
+    monthly_consumption: list = None,
+    slabs: list = None,
 ) -> list:
     """
-    One row per year. Self-consumed units are valued at the grid tariff, which escalates;
-    the exported surplus is paid at the export tariff, held flat (regulated APPC-linked
-    rates). O&M is held flat too, as is the inverter replacement, which lands once in
-    `replacement_year` (1-based; 0 disables it).
+    One row per year. O&M is held flat, as is the inverter replacement, which lands
+    once in `replacement_year` (1-based; 0 disables it).
+
+    Savings come from the customer's own consumption and slab tariff when both are
+    known: the year is settled month by month, surplus banks and offsets later months,
+    and only the balance left at year end is bought out at the export rate.
+
+    Without them it falls back to the older estimate - a flat tariff with a guessed
+    `export_ratio_pct` - and the row records which basis was used so the report can
+    say so.
     """
+    use_consumption = bool(monthly_consumption and slabs and monthly_share)
     rows = []
+
     for index, generated in enumerate(generation_kwh):
         year = index + 1
-        grid_tariff = tariff_inr_per_kwh * (1 + tariff_escalation_pct / 100) ** index
-        exported = generated * export_ratio_pct / 100
-        savings = (generated - exported) * grid_tariff + exported * export_tariff_inr_per_kwh
+        escalation = (1 + tariff_escalation_pct / 100) ** index
+        grid_tariff = tariff_inr_per_kwh * escalation
+
+        if use_consumption:
+            savings, self_consumed, exported = _savings_from_consumption(
+                generated, monthly_share, monthly_consumption, slabs, escalation,
+                export_tariff_inr_per_kwh,
+            )
+            basis = "consumption"
+        else:
+            exported = generated * export_ratio_pct / 100
+            self_consumed = generated - exported
+            savings = self_consumed * grid_tariff + exported * export_tariff_inr_per_kwh
+            basis = "flat"
+
         replacement = replacement_cost_inr if year == replacement_year else 0.0
         rows.append({
             "year": year,
             "generation_kwh": generated,
             "grid_tariff_inr": grid_tariff,
+            "self_consumed_kwh": self_consumed,
+            "exported_kwh": exported,
+            # What each generated unit is actually worth, whichever basis was used.
+            "effective_rate_inr": savings / generated if generated else 0.0,
+            "savings_basis": basis,
             "savings_inr": savings,
             "om_inr": om_cost_inr,
             "replacement_inr": replacement,
@@ -137,7 +190,8 @@ def _round_or_none(value, digits):
     return None if value is None else round(value, digits)
 
 
-def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh: float, degradation_pct: float) -> dict:
+def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh: float,
+                                   degradation_pct: float, monthly_share: list = None) -> dict:
     """
     Runs the financial model and returns a dict of results keyed by
     FINANCIAL_RESULT_FIELDS. All None when system_cost_inr is absent: an invented cost
@@ -170,6 +224,9 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
         cost * inputs["om_cost_pct"] / 100,
         replacement_year,
         replacement_cost,
+        monthly_share=monthly_share,
+        monthly_consumption=inputs.get("monthly_consumption"),
+        slabs=inputs.get("tariff_slabs"),
     )
 
     nets = [row["net_inr"] for row in rows]
@@ -193,6 +250,9 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
             "generation_kwh": round(row["generation_kwh"], 1),
             "grid_tariff_inr": round(row["grid_tariff_inr"], 2),
             "savings_inr": round(row["savings_inr"]),
+            "self_consumed_kwh": round(row["self_consumed_kwh"], 1),
+            "exported_kwh": round(row["exported_kwh"], 1),
+            "effective_rate_inr": round(row["effective_rate_inr"], 2),
             "om_inr": round(row["om_inr"]),
             "replacement_inr": round(row["replacement_inr"]),
             "net_inr": round(row["net_inr"]),
@@ -213,5 +273,9 @@ def perform_financial_calculations(inputs: dict, capacity_kwp: float, year1_kwh:
         "lcoe_inr_per_kwh": round(lcoe, 2),
         "co2_offset_tonnes": round(sum(generation) * GRID_EMISSION_FACTOR_KG_PER_KWH / 1000, 1),
         "inverter_replacement_applied_inr": round(replacement_cost) if replacement_year else None,
+        "savings_basis": rows[0]["savings_basis"],
+        "self_consumed_kwh": round(rows[0]["self_consumed_kwh"], 1),
+        "exported_kwh": round(rows[0]["exported_kwh"], 1),
+        "effective_rate_inr_per_kwh": round(rows[0]["effective_rate_inr"], 2),
         "cashflow_json": json.dumps(stored_rows),
     }

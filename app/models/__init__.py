@@ -10,6 +10,7 @@ from app.models.components import InverterModel, PanelModel
 from app.models.irradiance_cache import IrradianceCache
 from app.models.organisation import Organisation
 from app.models.solar_project import SolarProject
+from app.models.tariff_plan import TariffPlan
 from app.models.user import User
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "Organisation",
     "PanelModel",
     "SolarProject",
+    "TariffPlan",
     "User",
 ]

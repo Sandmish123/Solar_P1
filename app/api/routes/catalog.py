@@ -14,6 +14,9 @@ from app.schemas.components import (
     PanelModelCreate,
     PanelModelResponse,
     PanelModelUpdate,
+    TariffPlanCreate,
+    TariffPlanResponse,
+    TariffPlanUpdate,
 )
 from app.services import catalog
 
@@ -30,7 +33,9 @@ def _create(db, kind, payload, org_id):
         return catalog.create_component(db, kind, payload.model_dump(), org_id)
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail=f"You already have a {kind} with that manufacturer and model")
+        detail = (f"You already have a tariff plan with that name" if kind == "tariff"
+                  else f"You already have a {kind} with that manufacturer and model")
+        raise HTTPException(status_code=409, detail=detail)
 
 
 def _update(db, kind, component_id, payload, org_id):
@@ -55,6 +60,21 @@ def create_panel(payload: PanelModelCreate, db: Session = Depends(get_db), user:
 @router.put("/panels/{panel_id}", response_model=PanelModelResponse)
 def update_panel(panel_id: int, payload: PanelModelUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
     return _update(db, "panel", panel_id, payload, user.org_id)
+
+
+@router.get("/tariffs", response_model=List[TariffPlanResponse])
+def list_tariffs(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return catalog.list_components(db, "tariff", user.org_id)
+
+
+@router.post("/tariffs", response_model=TariffPlanResponse, status_code=201)
+def create_tariff(payload: TariffPlanCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return _create(db, "tariff", payload, user.org_id)
+
+
+@router.put("/tariffs/{tariff_id}", response_model=TariffPlanResponse)
+def update_tariff(tariff_id: int, payload: TariffPlanUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return _update(db, "tariff", tariff_id, payload, user.org_id)
 
 
 @router.get("/inverters", response_model=List[InverterModelResponse])
