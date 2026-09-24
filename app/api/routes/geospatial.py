@@ -1,5 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
+
+from app.api.deps import current_user
+from app.models.user import User
 
 
 router = APIRouter(prefix="/geospatial", tags=["geospatial"])
@@ -30,6 +33,7 @@ def estimated_building(latitude: float, longitude: float):
 def get_building_footprint(
     latitude: float = Query(..., ge=-90, le=90),
     longitude: float = Query(..., ge=-180, le=180),
+    user: User = Depends(current_user),
 ):
     """Return the nearest OSM building footprint for a project coordinate."""
     query = f"""

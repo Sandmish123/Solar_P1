@@ -7,7 +7,9 @@ import os
 import re
 import uuid
 
+from app.api.deps import current_user
 from app.database.session import get_db
+from app.models.user import User
 from app.schemas.solar_project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services import project_service
 from app.services.irradiance import InvalidLocationError
@@ -17,8 +19,8 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.post("/", response_model=ProjectResponse, status_code=201)
-def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
-    return project_service.create_project(db=db, project=project)
+def create_project(project: ProjectCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return project_service.create_project(db=db, project=project, org_id=user.org_id)
 
 
 @router.get("/", response_model=List[ProjectResponse])
@@ -27,29 +29,30 @@ def read_projects(
     limit: int = 100,
     search: str = Query(None, max_length=100, description="Matches project or client name"),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    return project_service.get_projects(db=db, skip=skip, limit=limit, search=search)
+    return project_service.get_projects(db=db, org_id=user.org_id, skip=skip, limit=limit, search=search)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def read_project(project_id: int, db: Session = Depends(get_db)):
-    db_project = project_service.get_project(db, project_id=project_id)
+def read_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    db_project = project_service.get_project(db, project_id=project_id, org_id=user.org_id)
     if db_project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return db_project
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-def update_project(project_id: int, project: ProjectUpdate, db: Session = Depends(get_db)):
-    db_project = project_service.update_project(db, project_id=project_id, project=project)
+def update_project(project_id: int, project: ProjectUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    db_project = project_service.update_project(db, project_id=project_id, project=project, org_id=user.org_id)
     if db_project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return db_project
 
 
 @router.delete("/{project_id}", status_code=204)
-def delete_project(project_id: int, db: Session = Depends(get_db)):
-    success = project_service.delete_project(db, project_id)
+def delete_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    success = project_service.delete_project(db, project_id, org_id=user.org_id)
     if not success:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -58,9 +61,9 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
 # ponytail: the sync Session then runs on the event loop; fine for sub-ms SQLite and
 # pooled Postgres queries, move to an async engine if calculation volume grows.
 @router.post("/{project_id}/calculate", response_model=ProjectResponse)
-async def calculate_project(project_id: int, db: Session = Depends(get_db)):
+async def calculate_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     try:
-        db_project = await project_service.calculate_project(db, project_id=project_id)
+        db_project = await project_service.calculate_project(db, project_id=project_id, org_id=user.org_id)
     except InvalidLocationError as exc:
         raise HTTPException(status_code=422, detail=f"PVGIS rejected the site location: {exc}")
     if db_project is None:
@@ -69,8 +72,8 @@ async def calculate_project(project_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{project_id}/report/pdf")
-def export_project_pdf(project_id: int, db: Session = Depends(get_db)):
-    db_project = project_service.get_project(db, project_id=project_id)
+def export_project_pdf(project_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    db_project = project_service.get_project(db, project_id=project_id, org_id=user.org_id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
         

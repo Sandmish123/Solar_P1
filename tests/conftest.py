@@ -16,8 +16,16 @@ from app.database.session import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.building_cache import BuildingCache  # noqa: E402,F401  (registers the table)
 from app.models.irradiance_cache import IrradianceCache  # noqa: E402,F401  (registers the table)
+from app.models.organisation import Organisation  # noqa: E402
 from app.models.solar_project import SolarProject  # noqa: E402,F401  (registers the table)
+from app.models.user import User  # noqa: E402
 from app.services import buildings, irradiance  # noqa: E402
+from app.services.auth import hash_password  # noqa: E402
+
+# Two organisations, so tenant isolation is testable rather than assumed.
+TEST_PASSWORD = "correct-horse-battery"
+ORG_A_EMAIL = "a@example.com"
+ORG_B_EMAIL = "b@example.com"
 
 # Real PVGIS v5_3 PVcalc response for the Gurugram cell (28.51, 77.06, 25 deg, south).
 PVGIS_GURUGRAM = json.loads((Path(__file__).parent / "fixtures" / "pvgis_gurugram.json").read_text())
@@ -30,6 +38,45 @@ def _schema():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(scope="session")
+def accounts(_schema):
+    """Two firms, one user each. Returns their organisation ids."""
+    session = SessionLocal()
+    try:
+        org_a, org_b = Organisation(name="Org A"), Organisation(name="Org B")
+        session.add_all([org_a, org_b])
+        session.flush()
+        password_hash = hash_password(TEST_PASSWORD)
+        session.add_all([
+            User(org_id=org_a.id, email=ORG_A_EMAIL, password_hash=password_hash, role="admin"),
+            User(org_id=org_b.id, email=ORG_B_EMAIL, password_hash=password_hash, role="member"),
+        ])
+        session.commit()
+        return {"org_a": org_a.id, "org_b": org_b.id}
+    finally:
+        session.close()
+
+
+def _signed_in_cookies(email):
+    """Sign in once and keep the cookie. bcrypt is deliberately slow, so logging in
+    per test would add roughly 30 seconds to the suite; the session cookie is signed
+    and stateless, so it can be replayed on a fresh client."""
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/auth/login", json={"email": email, "password": TEST_PASSWORD})
+        assert response.status_code == 200, response.text
+        return dict(test_client.cookies)
+
+
+@pytest.fixture(scope="session")
+def _org_a_cookies(accounts):
+    return _signed_in_cookies(ORG_A_EMAIL)
+
+
+@pytest.fixture(scope="session")
+def _org_b_cookies(accounts):
+    return _signed_in_cookies(ORG_B_EMAIL)
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +130,23 @@ def db():
 
 
 @pytest.fixture
-def client():
+def client(_org_a_cookies):
+    """Signed in as Org A. Every existing test uses this."""
+    with TestClient(app) as test_client:
+        test_client.cookies.update(_org_a_cookies)
+        yield test_client
+
+
+@pytest.fixture
+def other_org_client(_org_b_cookies):
+    """Signed in as Org B, for proving isolation."""
+    with TestClient(app) as test_client:
+        test_client.cookies.update(_org_b_cookies)
+        yield test_client
+
+
+@pytest.fixture
+def anonymous_client(accounts):
     with TestClient(app) as test_client:
         yield test_client
 

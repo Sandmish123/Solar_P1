@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, text
 from sqlalchemy.sql import expression
 from sqlalchemy.sql import func
 from app.calculations.solar import DEFAULT_IRRADIANCE_CALIBRATION
@@ -9,6 +9,7 @@ class SolarProject(Base):
     __tablename__ = "solar_projects"
 
     id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=False, index=True)
     
     # Project Info
     project_name = Column(String, index=True)

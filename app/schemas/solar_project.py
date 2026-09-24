@@ -57,6 +57,7 @@ class ProjectUpdate(ProjectBase):
 
 class ProjectResponse(ProjectBase):
     id: int
+    org_id: int
     
     capacity_kwp: Optional[float] = None
     annual_gen_kwh: Optional[float] = None

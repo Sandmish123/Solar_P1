@@ -5,9 +5,10 @@ site irradiance from PVGIS and runs a deterministic calculation engine → SPA
 renders a report (Chart.js + MapLibre 3D site view) → ReportLab generates a
 downloadable PDF proposal. Used by a solar business: the PDFs go to paying customers.
 
-Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. All four phases are
-done: 0 (unblock), 1 (PVGIS irradiance), 2 (financials), 3 (UX), 4 (geometry-derived
-shading).
+Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. Part One (Phases 0–4)
+is done: unblock, PVGIS irradiance, financials, UX, geometry-derived shading. Part Two
+is under way — **Phase 5 (multi-tenancy) is done**; next is Phase 6 (component catalog
++ ALMM/DCR compliance). The app is becoming a multi-tenant SaaS sold to other EPCs.
 
 ## Commands
 
@@ -16,6 +17,7 @@ source .venv/bin/activate          # Python 3.11, matches the Docker image
 pip install -r requirements.txt
 dot_clean -m migrations            # REQUIRED on this exFAT volume before alembic, see Sharp edges
 alembic upgrade head               # creates solar_reports.db
+python scripts/create_user.py --email you@firm.com --org "Your Firm"   # first account
 uvicorn app.main:app --reload      # serves API + frontend on :8000
 pytest tests/ -v                   # fully offline, never hits PVGIS
 docker build -t solar-p1 . && docker run --env-file .env -p 8000:8000 solar-p1
@@ -27,7 +29,12 @@ Windows: `start.bat` / `stop.bat` (port 8000, needs `.venv`).
 | Path | Role |
 |---|---|
 | `app/main.py` | App factory, CORS, lifespan (temp_pdfs mkdir + purge), static mounts, `/` → index.html |
-| `app/config.py` | `Settings` (pydantic-settings), `get_settings()` is `lru_cache`d |
+| `app/config.py` | `Settings` (pydantic-settings), `lru_cache`d; refuses to boot in production on the default SECRET_KEY |
+| `app/models/{organisation,user}.py` | `organisations`, `users` — one firm, its people |
+| `app/services/auth.py` | bcrypt hashing, `authenticate()` with constant-time-ish lookup |
+| `app/api/deps.py` | `current_user` dependency; every data route depends on it |
+| `app/api/routes/auth.py` | `POST /api/auth/login`, `/logout`, `GET /me` |
+| `scripts/create_user.py` | Creates the first organisation and user; password from a prompt |
 | `app/database/session.py` | Engine, `SessionLocal`, `Base`, `get_db` dependency |
 | `app/models/solar_project.py` | `solar_projects` — inputs, orientation, loss params, calc results, irradiance source, one row |
 | `app/models/irradiance_cache.py` | `irradiance_cache` — PVGIS results per ~1 km cell + orientation |
@@ -54,6 +61,33 @@ Windows: `start.bat` / `stop.bat` (port 8000, needs `.venv`).
 Frontend is plain globals (`api`, `app`, `chartManager`, `mapManager`, `esc`) wired
 via inline `onclick` in `index.html`. No bundler, no framework, no npm. Chart.js
 and maplibre-gl load from CDN.
+
+## Auth and tenancy
+
+Multi-tenant. Every project belongs to an organisation; a user belongs to one
+organisation and sees only its projects.
+
+- **Scoping happens in `project_service.get_project(db, project_id, org_id)`.** Every
+  other service function goes through it, so a route cannot forget to scope. Routes
+  pass `user.org_id` from the `current_user` dependency, never a client-supplied value.
+- A project belonging to another firm returns **404, not 403** — Org B must not learn
+  that a project exists.
+- **The caches stay global on purpose.** `irradiance_cache` and `building_cache` hold
+  public facts about places, not tenant data; a cross-tenant cache hit is the feature.
+  Never add `org_id` to them.
+- Sessions: signed cookie via Starlette `SessionMiddleware`, `HttpOnly`, `SameSite=Lax`,
+  `Secure` in production, 14 days. No JWT — same-origin SPA, and a cookie is revocable.
+- Passwords: bcrypt directly, not passlib (passlib 1.7.4 breaks against bcrypt 4.x).
+  bcrypt truncates past 72 bytes, so `MAX_PASSWORD_BYTES` is enforced at the schema
+  rather than silently accepting a weaker password.
+- Login returns one message for unknown email and wrong password alike, and hashes a
+  dummy password when the email is unknown, so neither wording nor timing confirms
+  which addresses have accounts.
+- **No default account ships.** The migration creates a "Default Organisation" and
+  adopts pre-tenancy projects into it, but creates no user — run
+  `scripts/create_user.py` once.
+- Tests sign in once per session and replay the signed cookie (`_org_a_cookies`);
+  bcrypt is deliberately slow and logging in per test cost ~30 s.
 
 ## Calculation engine
 
@@ -204,6 +238,9 @@ often enough that a single attempt usually fails.
   `3d-model.js` so dragging the time slider stays local.
   `test_python_and_javascript_solvers_agree` runs both through node and pins them to
   1e-6, so they cannot drift. Change one, change the other.
+- Anything reachable without a session is a decision, not an accident. Today that is
+  `/api/health` (Render's check) and the static frontend. Everything else depends on
+  `current_user`, including `/api/geospatial/building`, which spends our Overpass quota.
 - **Tests never touch the network.** The autouse `offline_pvgis` fixture in
   `conftest.py` replaces `fetch_pvgis`, and `offline_overpass` replaces
   `fetch_buildings`; both return the list of calls made. To test the real HTTP
@@ -215,6 +252,9 @@ often enough that a single attempt usually fails.
 
 ## Sharp edges
 
+- The tenant isolation test in `tests/test_auth.py` is load-bearing. If it is ever
+  weakened, every firm's proposals are one bug away from each other.
+
 - **The repo is on an exFAT volume.** macOS writes a `._<name>` AppleDouble twin
   for files here. Alembic loads every `*.py` in `migrations/versions/`, so
   `._*.py` crashes it with `SyntaxError: source code string cannot contain null
@@ -222,9 +262,6 @@ often enough that a single attempt usually fails.
   regenerate them. `.gitignore` and `.dockerignore` exclude them; Render builds
   from a clean git checkout and is unaffected. pip's `Ignoring invalid
   distribution -xyz` warnings are the same cause, and harmless.
-- `main.py` sets `allow_origins=["*"]` with `allow_credentials=True`; browsers
-  reject that combination, and it's wide open regardless. Frontend is
-  same-origin, so CORS isn't actually needed.
 - The `/calculate` route is async but uses the sync SQLAlchemy `Session`, so DB
   calls run on the event loop. Fine for sub-ms queries; move to an async engine
   if calculation volume grows.

@@ -21,6 +21,11 @@ function apiErrorMessage(payload, fallback) {
 
 async function request(path, options, fallback) {
     const res = await fetch(path, options);
+    // An expired or missing session anywhere means back to the sign-in screen.
+    // The /auth/ routes are exempt: a failed login must show its own message.
+    if (res.status === 401 && !path.includes('/auth/') && window.app) {
+        app.showLogin();
+    }
     if (!res.ok) {
         throw new Error(apiErrorMessage(await res.json().catch(() => null), fallback));
     }
@@ -61,6 +66,19 @@ const api = {
     calculateProject(id) {
         // Surfaces e.g. "PVGIS rejected the site location: Location over the sea".
         return request(`${this.baseUrl}/projects/${id}/calculate`, { method: 'POST' }, 'Calculation failed');
+    },
+
+    login(email, password) {
+        return request(`${this.baseUrl}/auth/login`, { method: 'POST', ...jsonBody({ email, password }) },
+            'Sign in failed');
+    },
+
+    logout() {
+        return request(`${this.baseUrl}/auth/logout`, { method: 'POST' }, 'Sign out failed');
+    },
+
+    me() {
+        return request(`${this.baseUrl}/auth/me`, {}, 'Not signed in');
     },
 
     getBuildingFootprint(latitude, longitude) {

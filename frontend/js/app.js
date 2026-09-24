@@ -40,6 +40,7 @@ const FORM_FIELDS = [
 ];
 
 const app = {
+    user: null,
     currentProjectId: null,
     currentProject: null,
     editingId: null,
@@ -55,7 +56,60 @@ const app = {
             if (section) section.open = true;
         }, true);
 
-        this.loadDashboard();
+        this.checkSession();
+    },
+
+    // --- session -----------------------------------------------------------
+
+    async checkSession() {
+        try {
+            this.user = await api.me();
+            this.onSignedIn();
+        } catch (error) {
+            this.showLogin();
+        }
+    },
+
+    onSignedIn() {
+        document.body.classList.remove('signed-out');
+        document.getElementById('user-email').textContent = this.user.email;
+        this.showView('dashboard-view');
+    },
+
+    showLogin() {
+        this.user = null;
+        this.currentProject = null;
+        this.currentProjectId = null;
+        document.body.classList.add('signed-out');
+        this.showView('login-view');
+    },
+
+    async handleLogin(event) {
+        event.preventDefault();
+        const button = document.getElementById('btnLogin');
+        const error = document.getElementById('loginError');
+        button.disabled = true;
+        error.textContent = '';
+        try {
+            this.user = await api.login(
+                document.getElementById('login_email').value,
+                document.getElementById('login_password').value,
+            );
+            document.getElementById('login-form').reset();
+            this.onSignedIn();
+        } catch (failure) {
+            error.textContent = failure.message;
+        } finally {
+            button.disabled = false;
+        }
+    },
+
+    async logout() {
+        try {
+            await api.logout();
+        } finally {
+            this.showLogin();
+        }
     },
 
     showView(viewId) {
@@ -65,7 +119,8 @@ const app = {
             else v.classList.add('hidden');
         });
 
-        if (viewId === 'dashboard-view') {
+        // Loading the dashboard while signed out would 401 straight back to login.
+        if (viewId === 'dashboard-view' && this.user) {
             this.loadDashboard();
         }
     },

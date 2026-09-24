@@ -962,3 +962,38 @@ h3 {
     font-size: 0.8125rem;
     color: #92400e;
 }
+
+/* ---------- Sign in ---------- */
+
+.user-chip {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-right: 0.25rem;
+}
+
+/* Signed out: no nav actions, nothing to act on. */
+body.signed-out #btnNewProject,
+body.signed-out #btnLogout,
+body.signed-out .user-chip {
+    display: none;
+}
+
+.login-card {
+    max-width: 380px;
+    margin: 4rem auto;
+}
+
+.login-card h2 {
+    margin-bottom: 1.5rem;
+    font-size: 1.5rem;
+}
+
+.login-card .btn {
+    width: 100%;
+    margin-top: 0.5rem;
+}
+
+.login-card .error-text {
+    display: block;
+    margin-top: 0.75rem;
+}

@@ -1,12 +1,12 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 from contextlib import asynccontextmanager
 
 from app.config import get_settings
-from app.api.routes import projects, geospatial
+from app.api.routes import auth, projects, geospatial
 
 settings = get_settings()
 
@@ -31,13 +31,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS config
+# Signed session cookie. No CORS middleware: the SPA is served from this same origin,
+# so the previous allow_origins=["*"] with credentials was both invalid and needless.
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY,
+    session_cookie="solar_session",
+    max_age=14 * 24 * 60 * 60,
+    same_site="lax",
+    https_only=settings.is_production,
 )
 
 
@@ -47,6 +49,7 @@ def health_check():
 
 
 # Include Routers
+app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(geospatial.router, prefix="/api")
 

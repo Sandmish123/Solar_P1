@@ -11,15 +11,20 @@ from app.services.buildings import get_buildings
 from app.services.irradiance import get_irradiance
 
 
-def get_project(db: Session, project_id: int):
-    return db.query(SolarProject).filter(SolarProject.id == project_id).first()
+def get_project(db: Session, project_id: int, org_id: int):
+    """Scoped by organisation. Every other function goes through here, so a project
+    from another firm is indistinguishable from one that does not exist."""
+    return db.query(SolarProject).filter(
+        SolarProject.id == project_id,
+        SolarProject.org_id == org_id,
+    ).first()
 
 
-def get_projects(db: Session, skip: int = 0, limit: int = 100, search: str = None):
+def get_projects(db: Session, org_id: int, skip: int = 0, limit: int = 100, search: str = None):
     """Newest first. `search` matches project or client name, case-insensitively.
     ponytail: leading-wildcard LIKE can't use the name indexes; fine at proposal
     volumes, revisit with a trigram index if the dashboard ever feels slow."""
-    query = db.query(SolarProject)
+    query = db.query(SolarProject).filter(SolarProject.org_id == org_id)
     if search:
         pattern = f"%{search}%"
         query = query.filter(or_(
@@ -29,16 +34,16 @@ def get_projects(db: Session, skip: int = 0, limit: int = 100, search: str = Non
     return query.order_by(SolarProject.created_at.desc(), SolarProject.id.desc()).offset(skip).limit(limit).all()
 
 
-def create_project(db: Session, project: ProjectCreate):
-    db_project = SolarProject(**project.model_dump())
+def create_project(db: Session, project: ProjectCreate, org_id: int):
+    db_project = SolarProject(**project.model_dump(), org_id=org_id)
     db.add(db_project)
     db.commit()
     db.refresh(db_project)
     return db_project
 
 
-def update_project(db: Session, project_id: int, project: ProjectUpdate):
-    db_project = get_project(db, project_id)
+def update_project(db: Session, project_id: int, project: ProjectUpdate, org_id: int):
+    db_project = get_project(db, project_id, org_id)
     if db_project:
         # PUT is a full replace: an omitted optional field is cleared, not kept.
         # The edit form always sends every field. Partial updates would be a PATCH.
@@ -53,9 +58,9 @@ def update_project(db: Session, project_id: int, project: ProjectUpdate):
     return db_project
 
 
-async def calculate_project(db: Session, project_id: int):
+async def calculate_project(db: Session, project_id: int, org_id: int):
     """Raises app.services.irradiance.InvalidLocationError if PVGIS rejects the site."""
-    db_project = get_project(db, project_id)
+    db_project = get_project(db, project_id, org_id)
     if not db_project:
         return None
 
@@ -133,8 +138,8 @@ async def _estimate_shading(db: Session, db_project):
     )
 
 
-def delete_project(db: Session, project_id: int):
-    db_project = get_project(db, project_id)
+def delete_project(db: Session, project_id: int, org_id: int):
+    db_project = get_project(db, project_id, org_id)
     if db_project:
         db.delete(db_project)
         db.commit()
