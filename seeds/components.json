@@ -1,0 +1,28 @@
+{
+  "_note": [
+    "Shared seed catalog: rows loaded with org_id = NULL, visible to every firm.",
+    "Only fields knowable without a datasheet are filled in. Voc, Isc, temperature",
+    "coefficients and dimensions are deliberately absent: they feed string sizing,",
+    "where a wrong number oversizes a string and damages an inverter, so they are",
+    "left for a human to copy from the manufacturer's sheet and then set",
+    "datasheet_verified.",
+    "almm_listed and dcr are likewise absent. They must be confirmed against the MNRE",
+    "ALMM List-I and the DCR verification portal; until they are, the app treats the",
+    "module as ineligible for a subsidy rather than assuming it qualifies.",
+    "Add the rest of the models you sell here, or through the catalog screen."
+  ],
+  "panels": [
+    {
+      "manufacturer": "Luminous",
+      "model": "LUM 635TG132 Bifi-GL",
+      "wp": 635,
+      "is_bifacial": true
+    }
+  ],
+  "inverters": [
+    {
+      "manufacturer": "Luminous",
+      "model": "NXI 320"
+    }
+  ]
+}

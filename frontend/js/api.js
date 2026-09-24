@@ -81,6 +81,14 @@ const api = {
         return request(`${this.baseUrl}/auth/me`, {}, 'Not signed in');
     },
 
+    getPanels() {
+        return request(`${this.baseUrl}/catalog/panels`, {}, 'Could not load the panel catalog');
+    },
+
+    getInverters() {
+        return request(`${this.baseUrl}/catalog/inverters`, {}, 'Could not load the inverter catalog');
+    },
+
     getBuildingFootprint(latitude, longitude) {
         const params = new URLSearchParams({ latitude, longitude });
         return request(`${this.baseUrl}/geospatial/building?${params}`, {}, 'OpenStreetMap building data unavailable');

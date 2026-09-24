@@ -22,7 +22,9 @@ class SolarProject(Base):
     # System Config
     num_panels = Column(Integer)
     panel_wattage = Column(Float)
-    panel_model = Column(String)
+    panel_model = Column(String)          # legacy free text, kept for pre-catalog rows
+    panel_model_id = Column(Integer, ForeignKey("panel_models.id"), nullable=True)
+    inverter_model_id = Column(Integer, ForeignKey("inverter_models.id"), nullable=True)
     inverter_model = Column(String)
     roof_area_sqm = Column(Float)
     degradation_rate = Column(Float, default=0.7)  # 0.7% default
@@ -91,6 +93,9 @@ class SolarProject(Base):
     shading_neighbour_count = Column(Integer, nullable=True)
     shading_heights_assumed = Column(Integer, nullable=True)
     shading_monthly_json = Column(Text, nullable=True)
+
+    # ALMM/DCR issues found at calculation time, as [{code, severity, message}].
+    compliance_json = Column(Text, nullable=True)
 
     # Metadata
     is_calculated = Column(Boolean, default=False)

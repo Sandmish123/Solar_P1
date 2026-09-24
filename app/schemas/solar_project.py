@@ -16,6 +16,8 @@ class ProjectBase(BaseModel):
     num_panels: int = Field(gt=0)
     panel_wattage: float = Field(gt=0, description="Wattage per panel in W")
     panel_model: str
+    panel_model_id: Optional[int] = Field(None, description="Catalog panel; overrides panel_wattage when set")
+    inverter_model_id: Optional[int] = None
     inverter_model: str
     roof_area_sqm: float = Field(gt=0)
     degradation_rate: float = 0.7
@@ -86,6 +88,7 @@ class ProjectResponse(ProjectBase):
     shading_neighbour_count: Optional[int] = None
     shading_heights_assumed: Optional[int] = None
     shading_monthly_json: Optional[str] = None
+    compliance_json: Optional[str] = None
 
     is_calculated: bool
     created_at: datetime

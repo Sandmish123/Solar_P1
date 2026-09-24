@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, ".")
 
+import app.models  # noqa: E402,F401  (registers every table before mappers configure)
 from app.database.session import SessionLocal  # noqa: E402
 from app.models.organisation import Organisation  # noqa: E402
 from app.models.user import User  # noqa: E402

@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.database.session import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.building_cache import BuildingCache  # noqa: E402,F401  (registers the table)
+from app.models.components import InverterModel, PanelModel  # noqa: E402,F401  (registers the tables)
 from app.models.irradiance_cache import IrradianceCache  # noqa: E402,F401  (registers the table)
 from app.models.organisation import Organisation  # noqa: E402
 from app.models.solar_project import SolarProject  # noqa: E402,F401  (registers the table)
@@ -149,6 +151,42 @@ def other_org_client(_org_b_cookies):
 def anonymous_client(accounts):
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def make_panel(client):
+    """Creates a catalog panel owned by Org A. Unique model name per call, because
+    (org_id, manufacturer, model) is unique."""
+    def _make(**overrides):
+        payload = {
+            "manufacturer": "TestCo",
+            "model": f"P-{uuid4().hex[:8]}",
+            "wp": 635,
+            "almm_listed": True,
+            "dcr": True,
+            "datasheet_verified": True,
+        }
+        payload.update(overrides)
+        response = client.post("/api/catalog/panels", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()
+    return _make
+
+
+@pytest.fixture
+def make_inverter(client):
+    def _make(**overrides):
+        payload = {
+            "manufacturer": "TestCo",
+            "model": f"I-{uuid4().hex[:8]}",
+            "ac_kw": 5.0,
+            "datasheet_verified": True,
+        }
+        payload.update(overrides)
+        response = client.post("/api/catalog/inverters", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()
+    return _make
 
 
 @pytest.fixture

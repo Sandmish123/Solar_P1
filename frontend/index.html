@@ -116,11 +116,25 @@
                             </div>
                         </div>
                         <div class="input-group">
-                            <label>Panel Model</label>
+                            <label for="panel_model_id">Panel (catalog)</label>
+                            <select id="panel_model_id" onchange="app.onPanelChange()"
+                                aria-describedby="panel_model_id_hint">
+                                <option value="">Not from catalog — type below</option>
+                            </select>
+                            <small id="panel_model_id_hint" class="text-gray">Choosing a catalog panel sets the wattage and enables ALMM/DCR checks.</small>
+                        </div>
+                        <div class="input-group">
+                            <label for="panel_model">Panel Model</label>
                             <input type="text" id="panel_model" required placeholder="Luminous Solar LUM 635TG132 Bifi-GL">
                         </div>
                         <div class="input-group">
-                            <label>Inverter Model</label>
+                            <label for="inverter_model_id">Inverter (catalog)</label>
+                            <select id="inverter_model_id" onchange="app.onInverterChange()">
+                                <option value="">Not from catalog — type below</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="inverter_model">Inverter Model</label>
                             <input type="text" id="inverter_model" required placeholder="Luminous NXI 320">
                         </div>
                         <div class="input-group">
@@ -341,6 +355,7 @@
 
                     <!-- LOSSES BREAKDOWN -->
                     <div class="section-title mt-xl">LOSSES BREAKDOWN</div>
+                    <div class="compliance-panel" id="r_compliance" hidden></div>
                     <div class="shading-note" id="r_shading_note" hidden></div>
                     <div class="losses-container" id="r_losses">
                         <!-- Populated via JS -->
@@ -488,10 +503,10 @@
 
     <!-- Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/js/api.js?v=11"></script>
-    <script src="/js/charts.js?v=11"></script>
+    <script src="/js/api.js?v=12"></script>
+    <script src="/js/charts.js?v=12"></script>
     <script src="/js/3d-model.js?v=6"></script>
-    <script src="/js/app.js?v=11"></script>
+    <script src="/js/app.js?v=12"></script>
 </body>
 
 </html>

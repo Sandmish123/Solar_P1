@@ -6,7 +6,7 @@ import os
 from contextlib import asynccontextmanager
 
 from app.config import get_settings
-from app.api.routes import auth, projects, geospatial
+from app.api.routes import auth, catalog, projects, geospatial
 
 settings = get_settings()
 
@@ -50,6 +50,7 @@ def health_check():
 
 # Include Routers
 app.include_router(auth.router, prefix="/api")
+app.include_router(catalog.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(geospatial.router, prefix="/api")
 

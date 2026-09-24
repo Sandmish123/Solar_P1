@@ -7,8 +7,9 @@ downloadable PDF proposal. Used by a solar business: the PDFs go to paying custo
 
 Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. Part One (Phases 0–4)
 is done: unblock, PVGIS irradiance, financials, UX, geometry-derived shading. Part Two
-is under way — **Phase 5 (multi-tenancy) is done**; next is Phase 6 (component catalog
-+ ALMM/DCR compliance). The app is becoming a multi-tenant SaaS sold to other EPCs.
+is under way — **Phases 5 (multi-tenancy) and 6 (component catalog + ALMM/DCR
+compliance) are done**; next is Phase 7 (P90, site temperature loss, monthly shading
+applied). The app is becoming a multi-tenant SaaS sold to other EPCs.
 
 ## Commands
 
@@ -18,6 +19,7 @@ pip install -r requirements.txt
 dot_clean -m migrations            # REQUIRED on this exFAT volume before alembic, see Sharp edges
 alembic upgrade head               # creates solar_reports.db
 python scripts/create_user.py --email you@firm.com --org "Your Firm"   # first account
+python scripts/load_components.py  # shared panel/inverter catalog, idempotent
 uvicorn app.main:app --reload      # serves API + frontend on :8000
 pytest tests/ -v                   # fully offline, never hits PVGIS
 docker build -t solar-p1 . && docker run --env-file .env -p 8000:8000 solar-p1
@@ -43,6 +45,11 @@ Windows: `start.bat` / `stop.bat` (port 8000, needs `.venv`).
 | `app/services/irradiance.py` | PVGIS client, cache, fallback. The only network I/O in the calc path |
 | `app/calculations/solar.py` | **Pure functions, no DB/IO.** The only place physics lives |
 | `app/calculations/financial.py` | **Pure functions, no DB/IO.** Subsidy, cashflow, payback, IRR, NPV, LCOE, CO₂ |
+| `app/calculations/compliance.py` | **Pure.** ALMM List-I and DCR rules; decides whether a subsidy may be claimed |
+| `app/models/components.py` | `panel_models`, `inverter_models`; `org_id` NULL = shared seed row |
+| `app/services/catalog.py` | Component visibility in one place: shared rows plus the firm's own |
+| `app/api/routes/catalog.py` | `/api/catalog/panels`, `/inverters` — list, create, update |
+| `seeds/components.json` + `scripts/load_components.py` | Shared catalog, loaded idempotently |
 | `app/calculations/solar_position.py` | **Pure.** Sun elevation/azimuth, ported from `3d-model.js` |
 | `app/calculations/shading.py` | **Pure.** Horizon profile from footprints, year sweep, shading loss |
 | `app/services/buildings.py` | Overpass client, cache, no-geometry fallback. Only runs when `shading_auto` |
@@ -181,6 +188,38 @@ buildings lack a height tag, so every one falls back to `ASSUMED_HEIGHT_M = 6.0`
 `shading_heights_assumed` carries the count, and the report and PDF both print it.
 Never present the number without that caveat.
 
+## Component catalog and compliance
+
+The catalog is the keystone of Part Two: stringing, the SLD, layout dimensions and
+compliance all read from it.
+
+- **`org_id` NULL is the shared seed catalog; a value is that firm's own addition.**
+  One table, no per-tenant duplication. Shared rows are read-only (403 on edit), so one
+  firm cannot change a model another is quoting.
+- **Compliance flags are tri-state.** `almm_listed` and `dcr` are `True`, `False`, or
+  NULL for "not recorded". **NULL never reads as compliant** — an unrecorded module
+  blocks the subsidy exactly as a non-compliant one does, because a subsidy you cannot
+  evidence is one the customer will not receive.
+- Two rules are asserted, both sourced: **ALMM List-I** for net-metered and PM Surya
+  Ghar projects, and **DCR** for subsidy-linked projects. No inverter rule is asserted —
+  nothing inverter-side was verified against a primary source, so `bis_certified` is
+  information only.
+- The List-II exemption (ends 2026-12-31) is a dated **warning**, never an error: what
+  replaces it is unpublished, and hard-blocking on a guess about a future rule would be
+  worse than flagging it.
+- **A blocked subsidy is removed from the financials, not just hidden on the PDF.**
+  Payback, IRR and NPV would otherwise rest on money that never arrives. Live check:
+  the same 15-panel system pays back in 6.2 years on a DCR module and 7.0 on a
+  non-DCR one.
+- The seed ships only what a model designation reveals — manufacturer, model, watts.
+  Voc, Isc and temperature coefficients are absent because they feed Phase 10 string
+  sizing, where a wrong number oversizes a string and damages an inverter. A human
+  copies them from the datasheet and sets `datasheet_verified`.
+- Once a catalog panel is chosen it is the source of truth: `panel_wattage` is derived
+  from `wp`, and the form makes the typed fields read-only.
+- A project with no `panel_model_id` asserts nothing and keeps its subsidy, so rows
+  created before the catalog are untouched.
+
 ## Irradiance service behaviour
 
 | PVGIS outcome | Result |
@@ -246,6 +285,11 @@ often enough that a single attempt usually fails.
   `fetch_buildings`; both return the list of calls made. To test the real HTTP
   client, route it through `httpx.MockTransport` (see `test_irradiance.py`). The conftest points `DATABASE_URL` at a temp file with
   hard assignment, because the schema fixture drops tables.
+- **New models are imported in `app/models/__init__.py`.** SQLAlchemy resolves a
+  ForeignKey by table name at mapper-configuration time, so importing one model without
+  its referents fails with `NoReferencedTableError` — which the test suite hides,
+  because `conftest.py` imports everything. Scripts and `migrations/env.py` import the
+  package, not individual modules.
 - Migrations use `op.batch_alter_table` so they run on both SQLite and Postgres.
   Verify with `alembic upgrade head && alembic downgrade -1 && alembic upgrade head`
   and `alembic check` (no drift).

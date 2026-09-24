@@ -997,3 +997,59 @@ body.signed-out .user-chip {
     display: block;
     margin-top: 0.75rem;
 }
+
+/* ---------- Compliance ---------- */
+
+.compliance-panel {
+    margin-bottom: 1rem;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius-sm);
+    background: rgba(37, 99, 235, 0.06);
+    border: 1px solid rgba(37, 99, 235, 0.25);
+    font-size: 0.8125rem;
+}
+
+/* An ineligible module costs the customer the subsidy: make it unmissable. */
+.compliance-panel.has-error {
+    background: rgba(185, 28, 28, 0.07);
+    border-color: rgba(185, 28, 28, 0.35);
+}
+
+.compliance-title {
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.compliance-panel ul {
+    margin: 0;
+    padding-left: 1.1rem;
+}
+
+.compliance-panel li {
+    margin-bottom: 0.25rem;
+}
+
+.compliance-panel li.is-error {
+    color: #b91c1c;
+    font-weight: 600;
+}
+
+.compliance-panel li.is-warning {
+    color: var(--text-secondary);
+}
+
+.input-group select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: rgba(250, 255, 255, 0.85);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.input-group input[readonly] {
+    background: #f1f5f9;
+    color: var(--text-secondary);
+}

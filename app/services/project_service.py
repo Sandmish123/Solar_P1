@@ -4,9 +4,11 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from app.models.solar_project import SolarProject
 from app.schemas.solar_project import ProjectCreate, ProjectUpdate
+from app.calculations.compliance import blocks_subsidy, check_compliance, to_dicts
 from app.calculations.financial import perform_financial_calculations
 from app.calculations.shading import DEFAULT_ARRAY_HEIGHT_M, compute_shading, find_host_height
 from app.calculations.solar import perform_all_calculations
+from app.services import catalog
 from app.services.buildings import get_buildings
 from app.services.irradiance import get_irradiance
 
@@ -92,6 +94,26 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
         "inverter_replacement_cost_inr": db_project.inverter_replacement_cost_inr,
     }
 
+    # Components and compliance first: both are plain DB reads, and resolving them
+    # before the awaits below means nothing here depends on ORM objects that a cache
+    # write inside get_irradiance could expire.
+    panel = _component(db, "panel", db_project.panel_model_id, org_id)
+    inverter = _component(db, "inverter", db_project.inverter_model_id, org_id)
+    if panel is not None:
+        # The catalog is the source of truth once a model is chosen.
+        data["panel_wattage"] = panel.wp
+
+    claiming_subsidy = financial_inputs["system_cost_inr"] is not None and (
+        financial_inputs["subsidy_inr"] is None or financial_inputs["subsidy_inr"] > 0
+    )
+    issues = check_compliance(panel, inverter, claiming_subsidy=claiming_subsidy)
+    if blocks_subsidy(issues):
+        # Not merely hidden on the PDF: a payback built on a subsidy the customer
+        # cannot evidence would overstate the return.
+        financial_inputs["subsidy_inr"] = 0.0
+    compliance_payload = to_dicts(issues)
+    panel_wattage = data["panel_wattage"]
+
     shading = await _estimate_shading(db, db_project) if db_project.shading_auto else None
     if shading:
         # Replaces the operator's figure only while shading_auto is on.
@@ -102,6 +124,8 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
     )
     results = perform_all_calculations(data, irradiance)
     results.update({
+        "panel_wattage": panel_wattage,
+        "compliance_json": json.dumps(compliance_payload) if compliance_payload else None,
         "shading_loss_pct": data["shading_loss_pct"],
         "shading_computed_pct": shading["annual_pct"] if shading else None,
         "shading_neighbour_count": shading["neighbour_count"] if shading else None,
@@ -120,6 +144,13 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
     db.commit()
     db.refresh(db_project)
     return db_project
+
+
+def _component(db: Session, kind: str, component_id, org_id: int):
+    """A catalog row the firm can see, or None when the project predates the catalog."""
+    if component_id is None:
+        return None
+    return catalog.get_component(db, kind, component_id, org_id)
 
 
 async def _estimate_shading(db: Session, db_project):

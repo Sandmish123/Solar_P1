@@ -9,6 +9,8 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from app.models.solar_project import SolarProject
 import json
 
+ERROR_COLOR = colors.HexColor('#b91c1c')
+WARNING_COLOR = colors.HexColor('#92400e')
 MONSOON_COLOR = colors.HexColor('#fbbc04')
 REGULAR_COLOR = colors.HexColor('#4285f4')
 
@@ -26,6 +28,31 @@ def format_inr(amount: float) -> str:
         groups.insert(0, head)
     sign = "-" if round(amount) < 0 else ""
     return f"{sign}Rs. {','.join(groups + [tail])}"
+
+
+def _compliance_block(project, h2_style, note_style) -> list:
+    """ALMM/DCR findings. Rendered on the energy page because it is a fact about the
+    module, not about the money, and must appear even for an uncosted project."""
+    if not project.compliance_json:
+        return []
+
+    issues = json.loads(project.compliance_json)
+    if not issues:
+        return []
+
+    story = [Spacer(1, 24), Paragraph("COMPLIANCE", h2_style)]
+    for issue in issues:
+        is_error = issue["severity"] == "error"
+        style = ParagraphStyle(
+            name=f"compliance_{issue['code']}",
+            parent=note_style,
+            textColor=ERROR_COLOR if is_error else WARNING_COLOR,
+            fontName='Helvetica-Bold' if is_error else 'Helvetica-Oblique',
+            spaceAfter=4,
+        )
+        prefix = "Not compliant" if is_error else "Note"
+        story.append(Paragraph(f"{prefix}: {issue['message']}", style))
+    return story
 
 
 def _page_decorations(project):
@@ -91,6 +118,12 @@ def _monthly_table(monthly: list) -> Table:
     return table
 
 
+def _has_compliance_error(project) -> bool:
+    if not project.compliance_json:
+        return False
+    return any(issue["severity"] == "error" for issue in json.loads(project.compliance_json))
+
+
 def _financial_page(project: SolarProject, title_style, h2_style, note_style) -> list:
     """Financial summary page, or nothing when the project has no system cost."""
     if project.net_investment_inr is None:
@@ -98,9 +131,13 @@ def _financial_page(project: SolarProject, title_style, h2_style, note_style) ->
 
     payback = f"{project.payback_years:g} years" if project.payback_years is not None else "Not within 25 years"
     irr = f"{project.irr_pct:g}%" if project.irr_pct is not None else "n/a"
+    subsidy_label = 'Subsidy (PM Surya Ghar)' if project.subsidy_inr is None else 'Subsidy'
+    if not project.subsidy_applied_inr and _has_compliance_error(project):
+        subsidy_label = 'Subsidy (not eligible, see Compliance)'
+
     metrics = [
         ['System Cost', format_inr(project.system_cost_inr)],
-        ['Subsidy (PM Surya Ghar)' if project.subsidy_inr is None else 'Subsidy', f"- {format_inr(project.subsidy_applied_inr)}"],
+        [subsidy_label, f"- {format_inr(project.subsidy_applied_inr)}"],
         ['Net Investment', format_inr(project.net_investment_inr)],
         ['Year 1 Savings', format_inr(project.year1_savings_inr)],
         ['Payback Period', payback],
@@ -337,6 +374,8 @@ def generate_project_pdf(project: SolarProject, output_path: str):
         ('BOX', (2, 0), (2, -1), 1, colors.lightgrey),
     ]))
     story.append(summary_table)
+
+    story.extend(_compliance_block(project, h2_style, styles['Italic']))
 
     if project.monthly_gen_json:
         monthly = json.loads(project.monthly_gen_json)

@@ -11,6 +11,8 @@ const FORM_FIELDS = [
     ['num_panels', 'int'],
     ['panel_wattage', 'number'],
     ['panel_model', 'text'],
+    ['panel_model_id', 'number'],
+    ['inverter_model_id', 'number'],
     ['inverter_model', 'text'],
     ['roof_area_sqm', 'number'],
     ['degradation_rate', 'number'],
@@ -41,6 +43,7 @@ const FORM_FIELDS = [
 
 const app = {
     user: null,
+    catalog: { panels: [], inverters: [] },
     currentProjectId: null,
     currentProject: null,
     editingId: null,
@@ -70,10 +73,60 @@ const app = {
         }
     },
 
-    onSignedIn() {
+    async onSignedIn() {
         document.body.classList.remove('signed-out');
         document.getElementById('user-email').textContent = this.user.email;
+        // Loaded once per session: the edit form fills a <select> by value, which
+        // only works after its options exist.
+        await this.loadCatalog();
         this.showView('dashboard-view');
+    },
+
+    async loadCatalog() {
+        try {
+            const [panels, inverters] = await Promise.all([api.getPanels(), api.getInverters()]);
+            this.catalog = { panels, inverters };
+        } catch (error) {
+            this.catalog = { panels: [], inverters: [] };   // typing the names still works
+        }
+        this.fillCatalogSelect('panel_model_id', this.catalog.panels,
+            p => `${p.manufacturer} ${p.model} — ${p.wp} W`);
+        this.fillCatalogSelect('inverter_model_id', this.catalog.inverters,
+            i => `${i.manufacturer} ${i.model}${i.ac_kw ? ` — ${i.ac_kw} kW` : ''}`);
+    },
+
+    fillCatalogSelect(id, components, label) {
+        const select = document.getElementById(id);
+        const chosen = select.value;
+        select.length = 1;                       // keep the "not from catalog" option
+        components.forEach(component => {
+            const option = document.createElement('option');
+            option.value = component.id;
+            option.textContent = label(component);
+            select.appendChild(option);
+        });
+        select.value = chosen;
+    },
+
+    onPanelChange() {
+        const panel = this.catalog.panels.find(p => String(p.id) === document.getElementById('panel_model_id').value);
+        const wattage = document.getElementById('panel_wattage');
+        const name = document.getElementById('panel_model');
+        if (panel) {
+            // The catalog is the source of truth; the server derives wattage from it too.
+            name.value = `${panel.manufacturer} ${panel.model}`;
+            wattage.value = panel.wp;
+        }
+        wattage.readOnly = Boolean(panel);
+        name.readOnly = Boolean(panel);
+    },
+
+    onInverterChange() {
+        const inverter = this.catalog.inverters.find(
+            i => String(i.id) === document.getElementById('inverter_model_id').value);
+        const name = document.getElementById('inverter_model');
+        if (inverter) name.value = `${inverter.manufacturer} ${inverter.model}`;
+        name.readOnly = Boolean(inverter);
     },
 
     showLogin() {
@@ -245,12 +298,16 @@ const app = {
         // defaults, and clears everything else.
         document.getElementById('project-form').reset();
         this.setFormMode('Create Solar Proposal', 'Generate Report');
+        this.onPanelChange();
+        this.onInverterChange();
         this.showView('form-view');
     },
 
     editProject(project) {
         this.editingId = project.id;
         this.fillForm(project);
+        this.onPanelChange();
+        this.onInverterChange();
         this.setFormMode(`Edit: ${project.project_name}`, 'Save & Recalculate');
         this.showView('form-view');
     },
@@ -371,6 +428,7 @@ const app = {
             </div>
         `;
 
+        this.renderCompliance(p);
         this.renderShadingNote(p);
 
         // Projection
@@ -381,6 +439,20 @@ const app = {
         document.getElementById('r_degradation_pct').textContent = `(${year25Ratio}% of Year 1)`;
 
         this.renderFinancials(p);
+    },
+
+    renderCompliance(p) {
+        const panel = document.getElementById('r_compliance');
+        const issues = p.compliance_json ? JSON.parse(p.compliance_json) : [];
+        panel.hidden = issues.length === 0;
+        if (panel.hidden) return;
+
+        const errors = issues.filter(i => i.severity === 'error');
+        panel.classList.toggle('has-error', errors.length > 0);
+        panel.innerHTML = `
+            <div class="compliance-title">${errors.length ? 'Not compliant' : 'Compliance notes'}</div>
+            <ul>${issues.map(i => `<li class="is-${esc(i.severity)}">${esc(i.message)}</li>`).join('')}</ul>
+        `;
     },
 
     renderShadingNote(p) {
