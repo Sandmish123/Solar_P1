@@ -57,8 +57,15 @@ def test_parse_rejects_malformed(pvgis_payload, mutate):
 
 
 def test_cache_key_uses_integers():
-    assert cache_key(28.507563, 77.061796, 25.4, -0.4) == (2851, 7706, 25, 0)
-    assert all(isinstance(k, int) for k in cache_key(28.5, 77.1, 25.0, 0.0))
+    # Position and orientation are integers so lookups never compare floats; mounting
+    # is part of the key because it changes the temperature loss PVGIS reports.
+    assert cache_key(28.507563, 77.061796, 25.4, -0.4) == (2851, 7706, 25, 0, "free")
+    assert cache_key(28.507563, 77.061796, 25.4, -0.4, "building")[4] == "building"
+    assert all(isinstance(k, int) for k in cache_key(28.5, 77.1, 25.0, 0.0)[:4])
+
+
+def test_an_unknown_mounting_falls_back_to_free():
+    assert cache_key(28.5, 77.1, 25, 0, "nonsense")[4] == "free"
 
 
 # --- caching ---------------------------------------------------------------
@@ -76,7 +83,7 @@ def test_nearby_sites_share_a_cell_and_fetch_at_cell_centre(db, offline_pvgis):
     _lookup(db, 12.3401, 76.6399)
     _lookup(db, 12.3449, 76.6351)  # same 0.01 deg cell
 
-    assert offline_pvgis == [(12.34, 76.64, 25, 0)]
+    assert offline_pvgis == [(12.34, 76.64, 25, 0, "free")]
 
 
 def test_orientation_is_part_of_the_key(db, offline_pvgis):
@@ -156,3 +163,57 @@ def test_fetch_other_errors_raise_http_error(monkeypatch, status):
     _mock_http(monkeypatch, lambda request: httpx.Response(status, text="busy"))
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(real_fetch_pvgis(28.51, 77.06, 25, 0))
+
+
+# --- P90 inputs and site temperature loss (Phase 7) -------------------------
+
+def test_parse_extracts_variability_and_temperature_loss(pvgis_payload):
+    parsed = parse_pvgis(pvgis_payload)
+
+    assert parsed["e_annual"] == pytest.approx(1872.16, abs=0.5)
+    assert parsed["sd_annual"] == pytest.approx(33.32, abs=0.5)
+    # l_tg is reported negative; the loss stack stores magnitudes.
+    assert parsed["temp_loss_pct"] == pytest.approx(10.98, abs=0.05)
+
+
+def test_building_mounting_is_hotter_but_equally_sunny(pvgis_payload, pvgis_building_payload):
+    free = parse_pvgis(pvgis_payload)
+    building = parse_pvgis(pvgis_building_payload)
+
+    # Mounting changes module temperature, not the sunlight falling on the plane.
+    assert building["h_annual"] == pytest.approx(free["h_annual"], abs=0.1)
+    assert building["temp_loss_pct"] > free["temp_loss_pct"]
+
+
+def test_relative_sd_is_a_fraction_of_annual_yield(pvgis_payload):
+    from app.services.irradiance import _with_relative_sd
+
+    parsed = _with_relative_sd(parse_pvgis(pvgis_payload))
+    assert parsed["relative_sd"] == pytest.approx(33.32 / 1872.16, rel=1e-3)
+
+
+def test_fallback_admits_it_knows_no_variability_or_temperature():
+    fallback = irradiance.fallback_irradiance()
+    assert fallback["sd_annual"] is None
+    assert fallback["temp_loss_pct"] is None
+    assert fallback["relative_sd"] is None
+
+
+def test_float_parsing_tolerates_pvgis_type_inconsistency():
+    from app.services.irradiance import _as_float
+
+    # PVGIS returns l_spec as a string while its siblings are numbers.
+    assert _as_float("0.37") == 0.37
+    assert _as_float(-10.98) == -10.98
+    assert _as_float(None) is None
+    assert _as_float("not a number") is None
+
+
+def test_mounting_is_sent_to_pvgis_and_keyed_separately(db, offline_pvgis):
+    _lookup(db, 23.25, 77.41)
+    asyncio.run(get_irradiance(db, 23.25, 77.41, 25, 0, "building"))
+
+    assert [call[4] for call in offline_pvgis] == ["free", "building"]
+    # Two cache rows for one cell: the hotter roof needs its own temperature loss.
+    assert asyncio.run(get_irradiance(db, 23.25, 77.41, 25, 0, "building"))["temp_loss_pct"] > \
+           asyncio.run(get_irradiance(db, 23.25, 77.41, 25, 0, "free"))["temp_loss_pct"]

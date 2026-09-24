@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -28,6 +30,8 @@ class ProjectBase(BaseModel):
     irradiance_calibration: float = Field(DEFAULT_IRRADIANCE_CALIBRATION, ge=0.5, le=1.5)
 
     temp_loss_pct: float = 11.5
+    temp_loss_auto: bool = Field(False, description="Derive temperature loss from PVGIS for this site")
+    mounting_type: Literal["free", "building"] = Field("free", description="free = elevated racking, building = flush mounted")
     shading_loss_pct: float = 0.0
     shading_auto: bool = Field(False, description="Estimate shading from OSM building geometry instead of using shading_loss_pct")
     soiling_loss_pct: float = 3.0
@@ -89,6 +93,8 @@ class ProjectResponse(ProjectBase):
     shading_heights_assumed: Optional[int] = None
     shading_monthly_json: Optional[str] = None
     compliance_json: Optional[str] = None
+    annual_gen_p90_kwh: Optional[float] = None
+    temp_loss_computed_pct: Optional[float] = None
 
     is_calculated: bool
     created_at: datetime

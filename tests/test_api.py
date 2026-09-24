@@ -323,3 +323,86 @@ def test_pdf_cashflow_shows_the_replacement_year(client, project_payload):
     text = _pdf_text(client.get(f"/api/projects/{project_id}/report/pdf").content)
     # Year 11 is not a normal milestone row; it appears because the cost lands there.
     assert "Inverter Replacement (year 11)" in text
+
+
+# --- P90, site temperature loss, shaded months (Phase 7) --------------------
+
+def test_p90_is_reported_alongside_p50(client, project_payload):
+    project_id = _calculated_project(client, project_payload)
+    fetched = client.get(f"/api/projects/{project_id}").json()
+
+    assert fetched["annual_gen_p90_kwh"] < fetched["annual_gen_kwh"]
+    assert fetched["annual_gen_p90_kwh"] / fetched["annual_gen_kwh"] == pytest.approx(0.977, abs=0.01)
+
+
+def test_temperature_loss_auto_uses_the_site_figure(client, project_payload):
+    manual = _calculated_project(client, {**project_payload, "temp_loss_pct": 11.5})
+    auto = _calculated_project(client, {**project_payload, "temp_loss_pct": 11.5, "temp_loss_auto": True})
+
+    manual_project = client.get(f"/api/projects/{manual}").json()
+    auto_project = client.get(f"/api/projects/{auto}").json()
+
+    # Off by default, so the operator's figure stands.
+    assert manual_project["temp_loss_pct"] == 11.5
+    # PVGIS reports ~10.98% for free-standing mounting at this site.
+    assert auto_project["temp_loss_pct"] == pytest.approx(10.98, abs=0.05)
+    assert auto_project["performance_ratio"] > manual_project["performance_ratio"]
+
+
+def test_the_computed_temperature_loss_is_always_reported(client, project_payload):
+    # Shown even when not applied, so the operator can see what the site suggests.
+    project_id = _calculated_project(client, project_payload)
+    fetched = client.get(f"/api/projects/{project_id}").json()
+
+    assert fetched["temp_loss_computed_pct"] == pytest.approx(10.98, abs=0.05)
+    assert fetched["temp_loss_pct"] == project_payload.get("temp_loss_pct", 11.5)
+
+
+def test_flush_mounting_runs_hotter_than_elevated_racking(client, project_payload):
+    elevated = _calculated_project(client, {**project_payload, "temp_loss_auto": True, "mounting_type": "free"})
+    flush = _calculated_project(client, {**project_payload, "temp_loss_auto": True, "mounting_type": "building"})
+
+    elevated_project = client.get(f"/api/projects/{elevated}").json()
+    flush_project = client.get(f"/api/projects/{flush}").json()
+
+    assert flush_project["temp_loss_pct"] > elevated_project["temp_loss_pct"]
+    assert flush_project["annual_gen_kwh"] < elevated_project["annual_gen_kwh"]
+    # Same sunlight either way: only the module temperature differs.
+    assert flush_project["irradiance_h_annual"] == pytest.approx(
+        elevated_project["irradiance_h_annual"], abs=0.2
+    )
+
+
+def test_an_unknown_mounting_is_rejected(client, project_payload):
+    assert client.post("/api/projects/", json={**project_payload, "mounting_type": "floating"}).status_code == 422
+
+
+def test_shading_reshapes_the_monthly_split(client, project_payload):
+    plain = _calculated_project(client, {**project_payload, "shading_loss_pct": 0.0})
+    shaded = _calculated_project(client, {**project_payload, "shading_loss_pct": 0.0, "shading_auto": True})
+
+    plain_months = json.loads(client.get(f"/api/projects/{plain}").json()["monthly_gen_json"])
+    shaded_project = client.get(f"/api/projects/{shaded}").json()
+    shaded_months = json.loads(shaded_project["monthly_gen_json"])
+
+    december_share_plain = plain_months[11]["value_kwh"] / sum(m["value_kwh"] for m in plain_months)
+    december_share_shaded = shaded_months[11]["value_kwh"] / sum(m["value_kwh"] for m in shaded_months)
+
+    # December is the most shaded month at the reference site, so it loses share.
+    assert december_share_shaded < december_share_plain
+    # The months still add up to the year.
+    assert sum(m["value_kwh"] for m in shaded_months) == pytest.approx(
+        shaded_project["annual_gen_kwh"], abs=1.0
+    )
+
+
+def test_pdf_shows_p90_with_its_caveat(client, project_payload):
+    project_id = _calculated_project(client, {**project_payload, "mounting_type": "building"})
+
+    text = _pdf_text(client.get(f"/api/projects/{project_id}/report/pdf").content)
+
+    assert "P90:" in text
+    assert "exceeded in 9 years out of 10" in text
+    # Never presented as bankable: this is weather variability only.
+    assert "not a bankable" in text
+    assert "flush mounted" in text

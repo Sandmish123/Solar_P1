@@ -291,6 +291,11 @@ def generate_project_pdf(project: SolarProject, output_path: str):
         [f"{round(project.annual_gen_kwh / 1000, 1)} MWh", ''],
         [f"Specific Yield: {project.specific_yield} kWh/kWp", f"Performance Ratio: {round(project.performance_ratio, 1)}%"]
     ]
+    if project.annual_gen_p90_kwh:
+        gen_data.append([
+            f"P90: {round(project.annual_gen_p90_kwh / 1000, 1)} MWh",
+            "exceeded in 9 years out of 10",
+        ])
     
     gen_table = Table(gen_data, colWidths=[3.5*inch, 3*inch])
     gen_table.setStyle(TableStyle([
@@ -298,7 +303,7 @@ def generate_project_pdf(project: SolarProject, output_path: str):
         ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
         ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (0, 0), 30),
-        ('FONTSIZE', (0, 1), (1, 1), 12),
+        ('FONTSIZE', (0, 1), (1, -1), 12),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
         ('TOPPADDING', (0, 0), (-1, -1), 15),
     ]))
@@ -306,11 +311,17 @@ def generate_project_pdf(project: SolarProject, output_path: str):
 
     # Tell the reader whether generation rests on site data or the regional estimate.
     if project.irradiance_source == "pvgis":
+        mounting = "flush mounted" if project.mounting_type == "building" else "elevated racking"
         source_note = (
             f"Irradiance source: PVGIS (EU JRC), {round(project.irradiance_h_annual)} kWh/m²/yr in-plane "
-            f"at {project.tilt_deg:g}° tilt, {project.azimuth_deg:g}° azimuth, "
+            f"at {project.tilt_deg:g}° tilt, {project.azimuth_deg:g}° azimuth, {mounting}, "
             f"adjusted ×{project.irradiance_calibration:g} for regional conditions."
         )
+        if project.annual_gen_p90_kwh:
+            source_note += (
+                " P90 reflects year-to-year weather variation only; it is not a bankable "
+                "figure, which would also carry model uncertainty."
+            )
     else:
         source_note = "Irradiance source: regional estimate (PVGIS unavailable at time of calculation)."
     story.append(Spacer(1, 6))

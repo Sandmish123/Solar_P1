@@ -31,6 +31,10 @@ ORG_B_EMAIL = "b@example.com"
 
 # Real PVGIS v5_3 PVcalc response for the Gurugram cell (28.51, 77.06, 25 deg, south).
 PVGIS_GURUGRAM = json.loads((Path(__file__).parent / "fixtures" / "pvgis_gurugram.json").read_text())
+# The same cell requested as building-integrated: identical irradiation, hotter module.
+PVGIS_GURUGRAM_BUILDING = json.loads(
+    (Path(__file__).parent / "fixtures" / "pvgis_gurugram_building.json").read_text()
+)
 # Real Overpass response for the reference site's cell (28.5076, 77.0618, r=150 m).
 OVERPASS_GURUGRAM = json.loads((Path(__file__).parent / "fixtures" / "overpass_gurugram.json").read_text())
 
@@ -86,9 +90,10 @@ def offline_pvgis(monkeypatch):
     """No test reaches the network. Returns the list of (lat, lon, tilt, azimuth) fetched."""
     calls = []
 
-    async def fake_fetch(latitude, longitude, tilt, azimuth):
-        calls.append((latitude, longitude, tilt, azimuth))
-        return PVGIS_GURUGRAM
+    async def fake_fetch(latitude, longitude, tilt, azimuth, mounting="free"):
+        calls.append((latitude, longitude, tilt, azimuth, mounting))
+        # Real captures for both mountings, so the hotter roof case is exercised offline.
+        return PVGIS_GURUGRAM_BUILDING if mounting == "building" else PVGIS_GURUGRAM
 
     monkeypatch.setattr(irradiance, "fetch_pvgis", fake_fetch)
     return calls
@@ -110,6 +115,11 @@ def offline_overpass(monkeypatch):
 @pytest.fixture
 def pvgis_payload():
     return PVGIS_GURUGRAM
+
+
+@pytest.fixture
+def pvgis_building_payload():
+    return PVGIS_GURUGRAM_BUILDING
 
 
 @pytest.fixture

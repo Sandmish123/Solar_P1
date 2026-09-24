@@ -126,3 +126,58 @@ def test_fallback_reproduces_reference_yield():
 
     assert res["specific_yield"] == pytest.approx(1401, abs=0.5)
     assert res["irradiance_source"] == "fallback"
+
+
+# --- P90 and shading-aware monthly split (Phase 7) --------------------------
+
+def test_p90_is_below_p50_by_the_expected_margin():
+    from app.calculations.solar import P90_Z_SCORE, calculate_p90_kwh
+
+    # 2% interannual variability -> P90 is 1.282 standard deviations down.
+    assert calculate_p90_kwh(10_000, 0.02) == pytest.approx(10_000 * (1 - P90_Z_SCORE * 0.02))
+    assert calculate_p90_kwh(10_000, 0.02) < 10_000
+
+
+@pytest.mark.parametrize("relative_sd", [None, 0, -0.01])
+def test_p90_is_unknown_without_a_standard_deviation(relative_sd):
+    from app.calculations.solar import calculate_p90_kwh
+
+    # The fallback profile has no dataset behind it, so P90 stays unknown.
+    assert calculate_p90_kwh(10_000, relative_sd) is None
+
+
+def test_reference_site_reports_a_p90(gurugram_irradiance):
+    from app.services.irradiance import _with_relative_sd
+
+    res = perform_all_calculations(REFERENCE_PROJECT, _with_relative_sd(dict(gurugram_irradiance)))
+
+    assert res["annual_gen_p90_kwh"] < res["annual_gen_kwh"]
+    # PVGIS reports ~1.8% interannual variability at this site.
+    assert res["annual_gen_p90_kwh"] / res["annual_gen_kwh"] == pytest.approx(0.977, abs=0.01)
+
+
+def test_p90_is_none_when_the_dataset_gave_no_variability(gurugram_irradiance):
+    assert perform_all_calculations(REFERENCE_PROJECT, gurugram_irradiance)["annual_gen_p90_kwh"] is None
+
+
+def test_monthly_split_follows_shading_when_it_is_known(gurugram_irradiance):
+    annual = 13_000.0
+    heavy_winter = [30.0] * 3 + [0.0] * 6 + [30.0] * 3   # Jan-Mar and Oct-Dec shaded
+
+    unshaded = json.loads(calculate_monthly_generation(annual, gurugram_irradiance["monthly_h"]))
+    shaded = json.loads(calculate_monthly_generation(annual, gurugram_irradiance["monthly_h"], heavy_winter))
+
+    assert shaded[0]["value_kwh"] < unshaded[0]["value_kwh"]   # January loses share
+    assert shaded[5]["value_kwh"] > unshaded[5]["value_kwh"]   # June gains it
+    # Shading is already in the performance ratio, so this only reshapes the year.
+    assert sum(m["value_kwh"] for m in shaded) == pytest.approx(annual, abs=0.6)
+
+
+def test_monthly_shading_must_have_twelve_values(gurugram_irradiance):
+    with pytest.raises(ValueError):
+        calculate_monthly_generation(1000, gurugram_irradiance["monthly_h"], [10.0] * 11)
+
+
+def test_fully_shaded_year_is_rejected_rather_than_dividing_by_zero(gurugram_irradiance):
+    with pytest.raises(ValueError):
+        calculate_monthly_generation(1000, gurugram_irradiance["monthly_h"], [100.0] * 12)

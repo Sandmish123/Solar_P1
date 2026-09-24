@@ -7,9 +7,10 @@ downloadable PDF proposal. Used by a solar business: the PDFs go to paying custo
 
 Roadmap: `~/.claude/plans/what-is-the-scope-unified-cosmos.md`. Part One (Phases 0–4)
 is done: unblock, PVGIS irradiance, financials, UX, geometry-derived shading. Part Two
-is under way — **Phases 5 (multi-tenancy) and 6 (component catalog + ALMM/DCR
-compliance) are done**; next is Phase 7 (P90, site temperature loss, monthly shading
-applied). The app is becoming a multi-tenant SaaS sold to other EPCs.
+is under way — **Phases 5 (multi-tenancy), 6 (component catalog + ALMM/DCR compliance)
+and 7 (P90, site temperature loss, shaded monthly split) are done**; next is Phase 8
+(consumption, tariff slabs, sizing). The app is becoming a multi-tenant SaaS sold to
+other EPCs.
 
 ## Commands
 
@@ -106,8 +107,22 @@ annual_kwh = capacity_kwp × H(i)_y × irradiance_calibration × PR/100
   site's lat/lon, `tilt_deg`, and `azimuth_deg` (PVGIS convention: 0 = south,
   −90 = east, +90 = west). Requested with `loss=0` — our own 7-way loss stack
   supplies the losses; letting PVGIS apply them too would double-count.
-- Monthly generation is split by the site's real monthly `H(i)_m` share. The
+- Monthly generation is split by each month's `H(i)_m` **less that month's shading**,
+  so a shaded December loses share to an unshaded June. The annual total is unchanged:
+  shading is already in the performance ratio, this only reshapes the year. The
   "Monsoon" tag on Jun–Sep is a chart label only.
+- **P90** (`annual_gen_p90_kwh`) = P50 × (1 − 1.282 × relative SD), from PVGIS's
+  interannual `SD_y`. This is **weather variability only** — a bank's P90 also carries
+  model and degradation uncertainty and will be lower. The report and PDF both say so;
+  never present it as bankable. None when the dataset gave no SD, e.g. the fallback.
+- **Temperature loss** can come from the site. `temp_loss_auto` (off by default, like
+  `shading_auto`) replaces `temp_loss_pct` with PVGIS's `l_tg` for this location *and
+  mounting*. `temp_loss_computed_pct` is always reported so the operator can see what
+  the site suggests even when not applying it.
+- **`mounting_type`** is an input, not an assumption: `free` = elevated racking with
+  airflow, `building` = flush mounted. It does not change irradiation at all, only
+  module temperature — at the reference site 10.98% vs 14.71%, which is 12.8 MWh
+  against 13.4. Picking one silently would be wrong for half of all installs.
 - `PR = 100 − sum(losses)`. Additive, not multiplicative — matches the
   reference PDF, not PVsyst.
 - 25-yr compounded degradation, unchanged.
@@ -231,9 +246,18 @@ compliance all read from it.
 
 - The fallback reproduces the reference Gurugram yield. It is not site-specific,
   and the report shows an amber warning plus a PDF note saying so.
-- Cache keys are **integers**: `round(lat×100)`, `round(lon×100)`, whole-degree
-  tilt/azimuth. Never key on floats. PVGIS is queried at the cell's own
-  coordinates, so a cached value doesn't depend on which project fetched it.
+- Cache keys are **integers plus mounting**: `round(lat×100)`, `round(lon×100)`,
+  whole-degree tilt/azimuth, and `free`/`building`. Never key on floats. PVGIS is
+  queried at the cell's own coordinates, so a cached value doesn't depend on which
+  project fetched it. Mounting is in the key because the same cell has two different
+  temperature losses.
+- `parse_pvgis` also lifts `E_y`, `SD_y` (for P90) and `l_tg` (site temperature loss).
+  All three are optional, so a row cached before Phase 7 still works. **Never trust the
+  JSON types**: PVGIS returns `l_spec` as a string while its siblings are numbers, so
+  everything goes through `_as_float`.
+- Known omission: PVGIS also quantifies angle-of-incidence and spectral losses
+  (≈2.9% combined at the reference site) that the loss stack ignores, so the model is
+  mildly optimistic by that much.
 - `get_irradiance` commits the session when it writes a cache row. Call it before
   modifying other objects in that session (see `calculate_project`).
 - PVGIS v5_3, no API key, 10 s timeout.

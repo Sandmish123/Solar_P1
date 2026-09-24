@@ -19,8 +19,10 @@ const FORM_FIELDS = [
     ['tilt_deg', 'number'],
     ['azimuth_deg', 'number'],
     ['irradiance_calibration', 'number'],
+    ['mounting_type', 'text'],
 
     ['temp_loss_pct', 'number'],
+    ['temp_loss_auto', 'bool'],
     ['shading_loss_pct', 'number'],
     ['shading_auto', 'bool'],
     ['soiling_loss_pct', 'number'],
@@ -380,6 +382,12 @@ const app = {
         document.getElementById('r_specific_yield').textContent = `${p.specific_yield} kWh/kWp`;
         document.getElementById('r_pr').textContent = `${p.performance_ratio.toFixed(1)}%`;
 
+        // P90: the yield beaten in nine years out of ten, from weather variability
+        // alone. A bank's P90 also carries model uncertainty and will be lower.
+        document.getElementById('r_p90').textContent = p.annual_gen_p90_kwh
+            ? `${(p.annual_gen_p90_kwh / 1000).toFixed(1)} MWh`
+            : 'Not available';
+
         const sourceEl = document.getElementById('r_irradiance_source');
         const fromPvgis = p.irradiance_source === 'pvgis';
         sourceEl.textContent = fromPvgis
@@ -397,7 +405,10 @@ const app = {
         lossContainer.innerHTML = '';
 
         const lossItems = [
-            { name: 'Temperature', val: p.temp_loss_pct, color: 'var(--loss-temp)' },
+            {
+                name: p.temp_loss_auto ? 'Temperature (PVGIS)' : 'Temperature',
+                val: p.temp_loss_pct, color: 'var(--loss-temp)',
+            },
             { name: 'Shading', val: p.shading_loss_pct, color: 'var(--bg-color)' }, // invisible if 0
             { name: 'Soiling', val: p.soiling_loss_pct, color: 'var(--loss-soil)' },
             { name: 'Inverter', val: p.inverter_loss_pct, color: 'var(--loss-inv)' },

@@ -73,6 +73,7 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
         "panel_wattage": db_project.panel_wattage,
         "degradation_rate": db_project.degradation_rate,
         "temp_loss_pct": db_project.temp_loss_pct,
+        "temp_loss_auto": db_project.temp_loss_auto,
         "shading_loss_pct": db_project.shading_loss_pct,
         "soiling_loss_pct": db_project.soiling_loss_pct,
         "inverter_loss_pct": db_project.inverter_loss_pct,
@@ -120,11 +121,19 @@ async def calculate_project(db: Session, project_id: int, org_id: int):
         data["shading_loss_pct"] = shading["annual_pct"]
 
     irradiance = await get_irradiance(
-        db, db_project.latitude, db_project.longitude, db_project.tilt_deg, db_project.azimuth_deg
+        db, db_project.latitude, db_project.longitude, db_project.tilt_deg,
+        db_project.azimuth_deg, db_project.mounting_type,
     )
-    results = perform_all_calculations(data, irradiance)
+    if db_project.temp_loss_auto and irradiance.get("temp_loss_pct"):
+        # Replaces the operator's figure only while temp_loss_auto is on, and only
+        # when the dataset actually supplied one.
+        data["temp_loss_pct"] = irradiance["temp_loss_pct"]
+
+    results = perform_all_calculations(data, irradiance, shading)
     results.update({
         "panel_wattage": panel_wattage,
+        "temp_loss_pct": data["temp_loss_pct"],
+        "temp_loss_computed_pct": irradiance.get("temp_loss_pct"),
         "compliance_json": json.dumps(compliance_payload) if compliance_payload else None,
         "shading_loss_pct": data["shading_loss_pct"],
         "shading_computed_pct": shading["annual_pct"] if shading else None,

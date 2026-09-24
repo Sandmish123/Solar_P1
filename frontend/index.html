@@ -156,6 +156,14 @@
                             </div>
                         </div>
                         <div class="input-group">
+                            <label for="mounting_type">Mounting</label>
+                            <select id="mounting_type" aria-describedby="mounting_type_hint">
+                                <option value="free">Elevated racking (airflow under panels)</option>
+                                <option value="building">Flush mounted / integrated</option>
+                            </select>
+                            <small id="mounting_type_hint" class="text-gray">Flush-mounted panels run hotter and generate less.</small>
+                        </div>
+                        <div class="input-group">
                             <label for="irradiance_calibration">Irradiance Calibration</label>
                             <input type="number" step="0.0001" id="irradiance_calibration" required min="0.5" max="1.5"
                                 value="0.8305" aria-describedby="irradiance_calibration_hint">
@@ -167,6 +175,12 @@
                     <div class="card form-card full-width">
                         <details class="advanced">
                             <summary>3. System Losses (%)<span class="advanced-hint">defaults suit most rooftops</span></summary>
+                            <label class="checkbox-row" for="temp_loss_auto">
+                                <input type="checkbox" id="temp_loss_auto" aria-describedby="temp_loss_auto_hint">
+                                <span>Use the site's temperature loss from PVGIS
+                                    <small id="temp_loss_auto_hint" class="text-gray">Replaces the Temperature value below with PVGIS's figure for this location and mounting.</small>
+                                </span>
+                            </label>
                             <label class="checkbox-row" for="shading_auto">
                                 <input type="checkbox" id="shading_auto" aria-describedby="shading_auto_hint">
                                 <span>Estimate shading from nearby buildings (OpenStreetMap)
@@ -343,6 +357,10 @@
                                 <span class="hero-label">Performance Ratio</span>
                                 <span class="hero-val" id="r_pr">78.5%</span>
                             </div>
+                            <div class="stat-group">
+                                <span class="hero-label">P90 (weather variability)</span>
+                                <span class="hero-val" id="r_p90">-</span>
+                            </div>
                         </div>
                         <div class="hero-source" id="r_irradiance_source" role="status">Irradiance source: -</div>
                     </div>
@@ -503,10 +521,10 @@
 
     <!-- Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/js/api.js?v=12"></script>
-    <script src="/js/charts.js?v=12"></script>
+    <script src="/js/api.js?v=13"></script>
+    <script src="/js/charts.js?v=13"></script>
     <script src="/js/3d-model.js?v=6"></script>
-    <script src="/js/app.js?v=12"></script>
+    <script src="/js/app.js?v=13"></script>
 </body>
 
 </html>

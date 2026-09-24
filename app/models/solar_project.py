@@ -40,6 +40,10 @@ class SolarProject(Base):
 
     # Loss Parameters
     temp_loss_pct = Column(Float, default=11.5)
+    # Off by default, like shading_auto: turning it on changes existing proposals.
+    temp_loss_auto = Column(Boolean, default=False, server_default=expression.false())
+    # "free" = elevated rooftop racking with airflow, "building" = flush mounted.
+    mounting_type = Column(String, default="free", server_default=text("'free'"))
     shading_loss_pct = Column(Float, default=0.0)
     # Off by default: turning it on would silently change every existing proposal.
     shading_auto = Column(Boolean, default=False, server_default=expression.false())
@@ -96,6 +100,9 @@ class SolarProject(Base):
 
     # ALMM/DCR issues found at calculation time, as [{code, severity, message}].
     compliance_json = Column(Text, nullable=True)
+
+    annual_gen_p90_kwh = Column(Float, nullable=True)     # weather variability only
+    temp_loss_computed_pct = Column(Float, nullable=True)  # PVGIS l_tg for this site
 
     # Metadata
     is_calculated = Column(Boolean, default=False)
